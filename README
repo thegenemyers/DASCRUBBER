@@ -68,7 +68,7 @@ said database or a block thereof.  Note carefully that <source> must always refe
 the entire DB, only <overlaps> can involve a block number.
 
    Using the local alignment-pile for each A-read, DASqv produces a QV value for each
-cromplete segment of TRACE_SPACING bases (e.g. 100bp, the -s parameter to daligner).
+complete segment of TRACE_SPACING bases (e.g. 100bp, the -s parameter to daligner).
 The quality value of a segment is the minimum of 50 and the average percentile of the
 best -c alignment matches covering it.  One must supply the -c parameter and it should
 be set to 25-50% of the expected coverage of the data set.
