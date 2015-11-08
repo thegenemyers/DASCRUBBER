@@ -398,9 +398,10 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 }
 
 int main(int argc, char *argv[])
-{ FILE       *input;
-  char       *root, *las, *pwd;
-  int64       novl;
+{ FILE  *input;
+  char  *root, *las, *pwd;
+  int64  novl;
+  int    COVERAGE;
 
   //  Process arguments
 
@@ -410,7 +411,7 @@ int main(int argc, char *argv[])
 
     ARG_INIT("DASqv")
 
-    QV_DEEP  = -1;
+    COVERAGE = -1;
 
     j = 1;
     for (i = 1; i < argc; i++)
@@ -420,7 +421,7 @@ int main(int argc, char *argv[])
             ARG_FLAGS("v")
             break;
           case 'c':
-            ARG_POSITIVE(QV_DEEP,"Voting depth")
+            ARG_POSITIVE(COVERAGE,"Voting depth")
             break;
         }
       else
@@ -434,12 +435,22 @@ int main(int argc, char *argv[])
         exit (1);
       }
 
-    if (QV_DEEP < 0)
+    if (COVERAGE < 0)
       { fprintf(stderr,"Must supply -c parameter\n");
         exit (1);
       }
     else
-      QV_DEEP /= 2;
+      { if (COVERAGE >= 40)
+          QV_DEEP = COVERAGE/8;
+        else if (COVERAGE >= 20)
+          QV_DEEP = 5;
+        else if (COVERAGE >= 4)
+          QV_DEEP = COVERAGE/4;
+        else
+          { fprintf(stderr,"%s: Coverage is too low (< 4X), cannot infer qv's\n",Prog_Name);
+            exit (1);
+          }
+      }
   }
 
   //  Open trimmed DB
@@ -552,7 +563,7 @@ int main(int argc, char *argv[])
       for (i = 0; i <= MAXQV; i++)
         qgram[i] = sgram[i] = 0;
 
-      printf("\nDASqv -c%d %s %s\n",2*QV_DEEP,argv[1],argv[2]);
+      printf("\nDASqv -c%d %s %s\n",COVERAGE,argv[1],argv[2]);
     }
 
   //  Get trace point spacing information
@@ -593,13 +604,15 @@ int main(int argc, char *argv[])
           qtotal += qgram[i];
         }
 
-      printf("\nHistogram of q-values\n");
+      printf("\nHistogram of q-values (average %d best)\n",2*QV_DEEP);
       printf("\n                 Input                 QV\n");
       qsum = qgram[MAXQV];
-      printf("\n    %2d:                       %9lld  %5.1f%%\n\n",
-             MAXQV,qgram[MAXQV],(100.*qsum)/qtotal);
+      ssum = sgram[MAXQV];
+      printf("\n    %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n\n",
+             MAXQV,sgram[MAXQV],(100.*ssum)/stotal,qgram[MAXQV],(100.*qsum)/qtotal);
 
       qtotal -= qsum;
+      stotal -= ssum;
       ssum = qsum = 0;
       for (i = MAXQV-1; i >= 0; i--) 
         if (qgram[i] > 0)

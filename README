@@ -69,9 +69,10 @@ the entire DB, only <overlaps> can involve a block number.
 
    Using the local alignment-pile for each A-read, DASqv produces a QV value for each
 complete segment of TRACE_SPACING bases (e.g. 100bp, the -s parameter to daligner).
-The quality value of a segment is the minimum of 50 and the average percentile of the
-best -c alignment matches covering it.  One must supply the -c parameter and it should
-be set to 25-50% of the expected coverage of the data set.
+The quality value of the average percentile of the best 25-5-% alignment matches
+covering it depending on the coverage estimate -c.  One must supply the -c parameter
+to the expected coverage of the genome in question.  All quality values over 50 are
+clipped to 50.
    
    The quality values are written to a .qual track, that can be viewed by calling
 DBdump with the -i option set ("i" for "intrinsic QV").
