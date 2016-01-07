@@ -1,40 +1,3 @@
-/************************************************************************************\
-*                                                                                    *
-* Copyright (c) 2015, Dr. Eugene W. Myers (EWM). All rights reserved.                *
-*                                                                                    *
-* Redistribution and use in source and binary forms, with or without modification,   *
-* are permitted provided that the following conditions are met:                      *
-*                                                                                    *
-*  · Redistributions of source code must retain the above copyright notice, this     *
-*    list of conditions and the following disclaimer.                                *
-*                                                                                    *
-*  · Redistributions in binary form must reproduce the above copyright notice, this  *
-*    list of conditions and the following disclaimer in the documentation and/or     *
-*    other materials provided with the distribution.                                 *
-*                                                                                    *
-*  · The name of EWM may not be used to endorse or promote products derived from     *
-*    this software without specific prior written permission.                        *
-*                                                                                    *
-* THIS SOFTWARE IS PROVIDED BY EWM ”AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,    *
-* INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND       *
-* FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL EWM BE LIABLE   *
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES *
-* (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS  *
-* OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY      *
-* THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING     *
-* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN  *
-* IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.                                      *
-*                                                                                    *
-* For any issues regarding this software and its use, contact EWM at:                *
-*                                                                                    *
-*   Eugene W. Myers Jr.                                                              *
-*   Bautzner Str. 122e                                                               *
-*   01099 Dresden                                                                    *
-*   GERMANY                                                                          *
-*   Email: gene.myers@gmail.com                                                      *
-*                                                                                    *
-\************************************************************************************/
-
 /*******************************************************************************************
  *
  *  Using overlap pile for each read compute estimated intrinisic quality values
@@ -62,10 +25,13 @@
 
 static char *Usage = "[-v] -c<int> <source:db> <overlaps:las>";
 
-#define  MAXQV   50      //  Max QV score is 50
+#define  MAXQV   50     //  Max QV score is 50
 #define  MAXQV1  51
+#define  MINCOV   2     //  To have a score must be covered >= MINCOV in each direction (must be >0)
 
-static int     QV_DEEP;   //  # of best diffs to average for QV score
+#define  PARTIAL .20    //  Partial terminal segments covering this percentage are scored
+
+static int     QV_DEEP; //  # of best diffs to average for QV score
 static int     VERBOSE;
 
 static int     TRACE_SPACING;  //  Trace spacing (from .las file)
@@ -92,6 +58,7 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
   static int   *hist = NULL;
   static int   *cist = NULL;
   static uint8 *qvec = NULL;
+  static int    partial;
 
   int  alen, atick;
   int *tick, *cick;
@@ -112,11 +79,17 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
 
   if (atick > nmax)
     { nmax = atick*1.2 + 100;
+
       hist = (int *) Realloc(hist,nmax*MAXQV1*sizeof(int),"Allocating histograms");
       cist = (int *) Realloc(cist,nmax*MAXQV1*sizeof(int),"Allocating histograms");
       qvec = (uint8 *) Realloc(qvec,nmax*sizeof(uint8),"Allocating QV vector");
+
+      if (hist == NULL || cist == NULL || qvec == NULL)
+        exit (1);
+
       for (i = MAXQV1*nmax-1; i >= 0; i--)
         hist[i] = cist[i] = 0;
+      partial = PARTIAL*TRACE_SPACING;
     }
 
   //  For every segment, fill histogram of match diffs for every one of the
@@ -124,60 +97,63 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
   //   and reverse B-hits
 
   for (i = 0; i < novl; i++)
-    { Path  *path;
+    { Path   *path;
       uint16 *trace;
-      int     tlen;
+      int    *ht;
+      int     tlen, abit;
       int     a, b, x;
 
       path  = &(ovls[i].path);
       trace = (uint16 *) path->trace;
       tlen  = path->tlen;
 
+      if (COMP(ovls[i].flags))
+        ht = cist;
+      else
+        ht = hist;
+
       b = 0;
       a = (path->abpos/TRACE_SPACING)*MAXQV1;
 
-      if (path->abpos % TRACE_SPACING != 0)
-        { b += 2;
-          a += MAXQV1;
+      abit = (path->abpos % TRACE_SPACING);
+      if (abit != 0)
+        { a += MAXQV1;
+          b += 2;
         }
-      if (path->aepos % TRACE_SPACING != 0)
+
+      abit = (path->aepos % TRACE_SPACING);
+      if (abit != 0)
         tlen -= 2;
 
-      if (COMP(ovls[i].flags))
-        while (b < tlen)
-          { x = (int) ((200.*trace[b]) / (TRACE_SPACING + trace[b+1]));
-            if (x > MAXQV)
-              x = MAXQV;
-            cist[a + x] += 1;
-            a += MAXQV1;
-            b += 2;
-          }
-      else
-        while (b < tlen)
-          { x = (int) ((200.*trace[b]) / (TRACE_SPACING + trace[b+1]));
-            if (x > MAXQV)
-              x = MAXQV;
-            hist[a + x] += 1;
-            a += MAXQV1;
-            b += 2;
-          }
+      while (b < tlen)
+        { x = (int) ((200.*trace[b]) / (TRACE_SPACING + trace[b+1]));
+          if (x > MAXQV)
+            x = MAXQV;
+          ht[a + x] += 1;
+          a += MAXQV1;
+          b += 2;
+        }
+
+      if (path->aepos == alen && abit >= partial)
+        { x = (int) ((200.*trace[tlen]) / (abit + trace[tlen+1]));
+          if (x > MAXQV)
+            x = MAXQV;
+          ht[a + x] += 1;
+        }
     }
 
   //  For every segment, qv score is the maximum of the averages of the QV_DEEP lowest
   //    in the forward and reverse directions (if each is QV_DEEP), or the average
-  //    of overlap scores (if between 1 and 9), or MAXQV if no overlaps at all.
+  //    of overlap scores (if between MINCOV and QV_DEEP-1), or MAXQV if no overlaps at all.
   //    Reset histogram for segment to zeros.
 
-  tick = hist - MAXQV1;
-  cick = cist - MAXQV1;
+  tick = hist;
+  cick = cist;
   for (i = 0; i < atick; i++)
     { int  v, y;
       int  qvn, qvc;
       int  cntn, cntc;
       int  sumn, sumc;
-
-      tick += MAXQV1;
-      cick += MAXQV1;
 
 #ifdef QV_DEBUG
       { int min, max;
@@ -254,12 +230,12 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
       for (v++; v <= MAXQV; v++)
         cick[v] = 0;
 
-      if (cntn > 0)
+      if (cntn >= MINCOV)
         qvn = sumn/cntn;
       else
         qvn = MAXQV;
 
-      if (cntc > 0)
+      if (cntc >= MINCOV)
         qvc = sumc/cntc;
       else
         qvc = MAXQV;
@@ -268,6 +244,9 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
         qvec[i] = (uint8) qvn;
       else
         qvec[i] = (uint8) qvc;
+
+      tick += MAXQV1;
+      cick += MAXQV1;
 
 #ifdef QV_DEBUG
       printf(" >> %2d %2d = %2d <<\n",qvn,qvc,qvec[i]);
@@ -436,7 +415,7 @@ int main(int argc, char *argv[])
       }
 
     if (COVERAGE < 0)
-      { fprintf(stderr,"Must supply -c parameter\n");
+      { fprintf(stderr,"%s: Must supply -c parameter\n",Prog_Name);
         exit (1);
       }
     else

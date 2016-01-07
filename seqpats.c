@@ -1,40 +1,3 @@
-/************************************************************************************\
-*                                                                                    *
-* Copyright (c) 2015, Dr. Eugene W. Myers (EWM). All rights reserved.                *
-*                                                                                    *
-* Redistribution and use in source and binary forms, with or without modification,   *
-* are permitted provided that the following conditions are met:                      *
-*                                                                                    *
-*  · Redistributions of source code must retain the above copyright notice, this     *
-*    list of conditions and the following disclaimer.                                *
-*                                                                                    *
-*  · Redistributions in binary form must reproduce the above copyright notice, this  *
-*    list of conditions and the following disclaimer in the documentation and/or     *
-*    other materials provided with the distribution.                                 *
-*                                                                                    *
-*  · The name of EWM may not be used to endorse or promote products derived from     *
-*    this software without specific prior written permission.                        *
-*                                                                                    *
-* THIS SOFTWARE IS PROVIDED BY EWM ”AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,    *
-* INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND       *
-* FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL EWM BE LIABLE   *
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES *
-* (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS  *
-* OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY      *
-* THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING     *
-* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN  *
-* IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.                                      *
-*                                                                                    *
-* For any issues regarding this software and its use, contact EWM at:                *
-*                                                                                    *
-*   Eugene W. Myers Jr.                                                              *
-*   Bautzner Str. 122e                                                               *
-*   01099 Dresden                                                                    *
-*   GERMANY                                                                          *
-*   Email: gene.myers@gmail.com                                                      *
-*                                                                                    *
-\************************************************************************************/
-
 /*******************************************************************************************
  *
  *  Library of bit-vector based sequence anlyzers for finding teriminal palindromes
@@ -73,7 +36,7 @@
 #define WBIT  0x8000000000000000ll
 
 #define FLENG      4
-#define PLENG      2
+#define PLENG      6
 #define SLENG      4
 
 #define FLIPMIN  200    //   Minimum seed match length (must be <= FlipMax)
@@ -256,11 +219,26 @@ static int flip_confirm(Alignment *align, Work_Data *work, Align_Spec *spec,
 
       gap = rlen-(ae+be);
       if (gap <= 0)
-        { hit->divpt = (ab+rlen)/2;
+        { uint16 *trace = (uint16 *) path->trace;
+          int     pt; 
+
+          pt = 1;
+          be = bb + trace[pt];
+          ae = ((ab/100)+1)*100;
+          while (ae+be < rlen)
+            { pt += 2;
+              bb  = be;
+              be += trace[pt];
+              ab  = ae;
+              ae += 100;
+              if (ae > path->aepos)
+                ae = path->aepos;
+            }
+          hit->divpt = (rlen+(ae-be))/2;
           hit->qvmat = qvm;
           hit->gap   = 0;
 #ifdef SHOW
-          printf(" %5d: %5d %3d%% +++\n",hit->divpt,(ae-ab)/2,qvm);
+          printf(" %5d: %5d %3d%% +++\n",hit->divpt,(path->aepos-path->abpos)/2,qvm);
 #endif
           return (1);
         }
@@ -273,7 +251,7 @@ static int flip_confirm(Alignment *align, Work_Data *work, Align_Spec *spec,
           Compute_Trace_ALL(align,work);
           qvg = (100*path->diffs)/gap;
 
-          hit->divpt = (ab+rlen)/2;
+          hit->divpt = (rlen+(ae-be))/2;
           hit->qvmat = qvm;
           hit->gap   = gap;
           hit->qvgap = qvg;
@@ -453,7 +431,7 @@ Flip_Hit *Flip_Finder(HITS_DB *db, int i, int *nhit, int beg, int end)
   Alignment  _align, *align = &_align;
   Path       _path,  *path  = &_path;
 
-  int rlen, div, off;
+  int rlen, clen, div, off;
   int phit, shit;
 
   if (firstime)
@@ -467,21 +445,21 @@ Flip_Hit *Flip_Finder(HITS_DB *db, int i, int *nhit, int beg, int end)
     }
 
   align->path = path;
-  rlen = db->reads[i].rlen;           //  Fetch read
+  clen = db->reads[i].rlen;           //  Fetch read
 
 #ifdef SHOW
-  printf("Analyzing %d(%x) %d\n",i,(db->reads[i].flags & DB_BEST) != 0,rlen);
+  printf("Analyzing %d(%x) %d\n",i,(db->reads[i].flags & DB_BEST) != 0,clen);
   fflush(stdout);
 #endif
 
-  if (rlen < FlipMax)
+  if (clen < FlipMax)
     { *nhit = 0;
       return (hit);
     }
 
   if (Load_Read(db,i,read1,0))
     exit (1);
-  complement_read(read2,read1,rlen);
+  complement_read(read2,read1,clen);
 
   if (hmax == 0)
     { hmax = 10;
@@ -490,22 +468,22 @@ Flip_Hit *Flip_Finder(HITS_DB *db, int i, int *nhit, int beg, int end)
         exit (1);
     }
 
-  align->aseq = read2 + (rlen-end);
+  align->aseq = read2 + (clen-end);
   align->bseq = read1 + beg;
   align->alen = rlen = (end-beg);
   align->blen = rlen;
-  off = beg;
+  off = clen-end;
   align->aseq[rlen] = align->bseq[rlen] = 4;
   align->aseq[-1]   = align->bseq[-1]   = 4;
 
   phit = 0;
   while (flip_filter(align,work,spec,hit+phit))
-    { div   = rlen - hit[phit].divpt;
+    { div   = hit[phit].divpt;
       off  += div;
       rlen -= div;
-      hit[phit].divpt = off;
+      hit[phit].divpt = clen - off;
       align->alen = align->blen = rlen;
-      align->bseq = read1 + off;
+      align->aseq = read2 + off;
       align->aseq[rlen] = align->bseq[rlen] = 4;
       align->aseq[-1]   = align->bseq[-1]   = 4;
 
@@ -519,14 +497,30 @@ Flip_Hit *Flip_Finder(HITS_DB *db, int i, int *nhit, int beg, int end)
     }
 
   shit = phit;
-  align->bseq = align->aseq;
-  align->aseq = read1 + off;
+
+  clen = db->reads[i].rlen;           //  Start over
+  if (Load_Read(db,i,read1,0))
+    exit (1);
+  complement_read(read2,read1,clen);
+
+  if (phit > 0)
+    beg = hit[0].divpt;
+
+  align->aseq = read1 + beg;
+  align->bseq = read2 + (clen-end);
+  align->alen = rlen = (end-beg);
+  align->blen = rlen;
+  off = beg;
+  align->aseq[rlen] = align->bseq[rlen] = 4;
+  align->aseq[-1]   = align->bseq[-1]   = 4;
 
   while (flip_filter(align,work,spec,hit+shit))
-    { div = hit[shit].divpt;
-      hit[shit].divpt += off;
-      align->bseq += rlen - div;
-      align->alen  = align->blen = rlen = div;
+    { div   = hit[shit].divpt;
+      off  += div;
+      rlen -= div;
+      hit[shit].divpt = off;
+      align->alen = align->blen = rlen;
+      align->aseq = read1 + off;
       align->aseq[rlen] = align->bseq[rlen] = 4;
       align->aseq[-1]   = align->bseq[-1]   = 4;
 
@@ -539,13 +533,14 @@ Flip_Hit *Flip_Finder(HITS_DB *db, int i, int *nhit, int beg, int end)
         }
     }
 
-  { int i, j;
+  { int      i, j;
+    Flip_Hit x;
 
-    j = shit-1;
-    for (i = phit; i < j; i++, j--)
-      { hit[shit] = hit[i];
+    j = phit-1;
+    for (i = 0; i < j; i++, j--)
+      { x = hit[i];
         hit[i] = hit[j];
-        hit[j] = hit[shit];
+        hit[j] = x;
       }
   }
 

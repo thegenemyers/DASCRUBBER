@@ -1,40 +1,3 @@
-/************************************************************************************\
-*                                                                                    *
-* Copyright (c) 2014, Dr. Eugene W. Myers (EWM). All rights reserved.                *
-*                                                                                    *
-* Redistribution and use in source and binary forms, with or without modification,   *
-* are permitted provided that the following conditions are met:                      *
-*                                                                                    *
-*  · Redistributions of source code must retain the above copyright notice, this     *
-*    list of conditions and the following disclaimer.                                *
-*                                                                                    *
-*  · Redistributions in binary form must reproduce the above copyright notice, this  *
-*    list of conditions and the following disclaimer in the documentation and/or     *
-*    other materials provided with the distribution.                                 *
-*                                                                                    *
-*  · The name of EWM may not be used to endorse or promote products derived from     *
-*    this software without specific prior written permission.                        *
-*                                                                                    *
-* THIS SOFTWARE IS PROVIDED BY EWM ”AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,    *
-* INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND       *
-* FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL EWM BE LIABLE   *
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES *
-* (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS  *
-* OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY      *
-* THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING     *
-* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN  *
-* IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.                                      *
-*                                                                                    *
-* For any issues regarding this software and its use, contact EWM at:                *
-*                                                                                    *
-*   Eugene W. Myers Jr.                                                              *
-*   Bautzner Str. 122e                                                               *
-*   01099 Dresden                                                                    *
-*   GERMANY                                                                          *
-*   Email: gene.myers@gmail.com                                                      *
-*                                                                                    *
-\************************************************************************************/
-
 /*******************************************************************************************
  *
  *  Fast alignment discovery and trace generation along with utilites for displaying alignments
@@ -255,9 +218,9 @@ Align_Spec *New_Align_Spec(double ave_corr, int trace_space, float *freq)
     match = 1.-match;
   bias = (int) ((match+.025)*20.-1.);
   if (match < .2)
-    { EPRINTF(EPLACE,"Base bias worse than 80/20%% ! (New_Align_Spec)\n");
-      free(spec);
-      EXIT(NULL);
+    { fprintf(stderr,"Warning: Base bias worse than 80/20%% ! (New_Align_Spec)\n");
+      fprintf(stderr,"         Capping bias at this ratio.\n");
+      bias = 3; 
     }
 
   spec->ave_path = (int) (PATH_LEN * (1. - Bias_Factor[bias] * (1. - ave_corr)));
@@ -608,6 +571,9 @@ static int forward_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
       int     am, ac, ap;
       char   *a;
 
+      low -= 1;
+      hgh += 1;
+
       if (low <= vmin || hgh >= vmax)
         { int   span, wing;
           int64 move;
@@ -684,20 +650,22 @@ static int forward_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
           T  =  _T-vmin;
         }
 
-      if (low > minp)
-        { low -= 1;
-          NA[low] = NA[low+1];
+      if (low >= minp)
+        { NA[low] = NA[low+1];
           NB[low] = NB[low+1];
           V[low]  = -1;
         }
-      if (hgh < maxp)
-        { hgh += 1;
-          NA[hgh] = NA[hgh-1];
+      else
+        low += 1;
+
+      if (hgh <= maxp)
+        { NA[hgh] = NA[hgh-1];
           NB[hgh] = NB[hgh-1];
           V[hgh]  = am = -1;
         }
       else
-        am = V[hgh];
+        am = V[--hgh];
+
       dif += 1;
 
       ac = V[hgh+1] = V[low-1] = -1;
@@ -1272,6 +1240,9 @@ static int reverse_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
       int    am, ac, ap;
       char  *a;
 
+      low -= 1;
+      hgh += 1;
+
       if (low <= vmin || hgh >= vmax)
         { int   span, wing;
           int64 move, vd, md, had, hbd, nad, nbd, td;
@@ -1347,20 +1318,22 @@ static int reverse_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
           T  =  _T-vmin;
         }
 
-      if (low > minp)
-        { low -= 1;
-          NA[low] = NA[low+1];
+      if (low >= minp)
+        { NA[low] = NA[low+1];
           NB[low] = NB[low+1];
           V[low]  = ap = INT32_MAX;
         }
       else
-        ap = V[low]; 
-      if (hgh < maxp)
-        { hgh += 1;
-          NA[hgh] = NA[hgh-1];
+        ap = V[++low]; 
+
+      if (hgh <= maxp)
+        { NA[hgh] = NA[hgh-1];
           NB[hgh] = NB[hgh-1];
           V[hgh] = INT32_MAX;
         }
+      else
+        hgh -= 1;
+
       dif += 1;
 
       ac = V[hgh+1] = V[low-1] = INT32_MAX;
@@ -1904,7 +1877,7 @@ static int forward_extend(_Work_Data *work, _Align_Spec *spec, Alignment *align,
   int    *HA, *NA;
   int    *_HA, *_NA;
   Pebble *cells;
-  int     avail, cmax, boff;
+  int     avail, cmax;
 
   int     TRACE_SPACE = spec->trace_space;
   int     PATH_AVE    = spec->ave_path;
@@ -1946,11 +1919,6 @@ static int forward_extend(_Work_Data *work, _Align_Spec *spec, Alignment *align,
     cells = (Pebble *) (work->cells);
     cmax  = work->celmax;
     avail = 0;
-
-    if (COMP(align->flags))
-      boff = align->blen % TRACE_SPACE;
-    else
-      boff = 0;
   }
 
   /* Compute 0-wave starting from mid-line */
@@ -2423,7 +2391,7 @@ static int reverse_extend(_Work_Data *work, _Align_Spec *spec, Alignment *align,
   int    *HA, *NA;
   int    *_HA, *_NA;
   Pebble *cells;
-  int     avail, cmax, boff;
+  int     avail, cmax;
 
   int     TRACE_SPACE = spec->trace_space;
   int     PATH_AVE    = spec->ave_path;
@@ -2465,11 +2433,6 @@ static int reverse_extend(_Work_Data *work, _Align_Spec *spec, Alignment *align,
     cells = (Pebble *) (work->cells);
     cmax  = work->celmax;
     avail = 0;
-
-    if (COMP(align->flags))
-      boff = align->blen % TRACE_SPACE;
-    else
-      boff = 0;
   }
 
   more  = 1;
