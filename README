@@ -10,7 +10,7 @@
 
                             Author:  Gene Myers
                             First:   October 12, 2014
-                            Recent:  November 4, 2015
+                            Recent:  March 27, 2016
 
   The goal of scrubbing is to produce a set of edited reads that are guaranteed to
 (a) be continuous stretches of the underlying genome (i.e. no unremoved adapters
@@ -44,13 +44,4 @@ values produced.  This histgram is usefull in assessing, for a given data set, w
 constitutes the threshold -g and -b, to be used by down stream commands, for what is
 definitely a good segment and what is definitely a bad segment.
 
-2. DBsats [-v] <source:db>
-
-  DBsats generates a mask track "sats" (like the "dust" track of DBdust) for the
-reads in <source> where each masked interval contains a micro-sat sequence with a
-period of between 1 and 256.
-
-3.  DBpaln [-v] <source:db>
-
-  DBpaln generates a mask track "paln" for the reads in <source> where each masked
-interval contains a polindromic or hair-pin element.
+2. DAStrim -- soon !

@@ -23,7 +23,7 @@
 
 #undef  QV_DEBUG
 
-static char *Usage = "[-v] -c<int> <source:db> <overlaps:las>";
+static char *Usage = "[-v] -c<int> <source:db> <overlaps:las> ...";
 
 #define  MAXQV   50     //  Max QV score is 50
 #define  MAXQV1  51
@@ -48,6 +48,7 @@ static int64   QV_INDEX;   //  Current index into .qual.data file
 
 //  Statistics
 
+static int64 nreads, totlen;
 static int64 qgram[MAXQV1], sgram[MAXQV1];
 
 
@@ -258,6 +259,8 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
   if (VERBOSE)
     { for (i = 0; i < atick; i++)
         qgram[qvec[i]] += 1;
+      nreads += 1;
+      totlen += alen;
     }
 
   fwrite(qvec,sizeof(uint8),atick,QV_DFILE);
@@ -378,9 +381,10 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 
 int main(int argc, char *argv[])
 { FILE  *input;
-  char  *root, *las, *pwd;
+  char  *root, *dpwd;
+  char  *las, *lpwd;
   int64  novl;
-  int    COVERAGE;
+  int    c, COVERAGE;
 
   //  Process arguments
 
@@ -409,7 +413,7 @@ int main(int argc, char *argv[])
 
     VERBOSE = flags['v'];
 
-    if (argc != 3)
+    if (argc < 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
         exit (1);
       }
@@ -426,7 +430,7 @@ int main(int argc, char *argv[])
         else if (COVERAGE >= 4)
           QV_DEEP = COVERAGE/4;
         else
-          { fprintf(stderr,"%s: Coverage is too low (< 4X), cannot infer qv's\n",Prog_Name);
+          { fprintf(stderr,"%s: Average coverage is too low (< 4X), cannot infer qv's\n",Prog_Name);
             exit (1);
           }
       }
@@ -450,129 +454,129 @@ int main(int argc, char *argv[])
     Trim_DB(DB);
   }
 
-  //  Determine if overlap block is being processed and if so get first and last read
-  //    from .db file
-
-  pwd  = PathTo(argv[1]);
-  root = Root(argv[1],".db");
-  las  = Root(argv[2],".las");
-
-  { FILE *dbfile;
-    char  buffer[2*MAX_NAME+100];
-    char *p, *eptr;
-    int   i, part, nfiles, nblocks, cutoff, all, oindx;
-    int64 size;
-
-    DB_PART  = 0;
-    DB_FIRST = 0;
-    DB_LAST  = DB->nreads;
-
-    p = rindex(las,'.');
-    if (p != NULL)
-      { part = strtol(p+1,&eptr,10);
-        if (*eptr == '\0' && eptr != p+1)
-          { dbfile = Fopen(Catenate(pwd,"/",root,".db"),"r");
-            if (dbfile == NULL)
-              exit (1);
-            if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-              SYSTEM_ERROR
-            for (i = 0; i < nfiles; i++)
-              if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                SYSTEM_ERROR
-            if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-              SYSTEM_ERROR
-            if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-              SYSTEM_ERROR
-            for (i = 1; i <= part; i++)
-              if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                SYSTEM_ERROR
-            if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-              SYSTEM_ERROR
-            fclose(dbfile);
-            DB_PART = part;
-            *p = '\0';
-          }
-      }
-  }
-
-  //   Set up preliminary trimming track
-
-  if (DB_PART > 0)
-    { QV_AFILE = Fopen(Catenate(pwd,PATHSEP,root,Numbered_Suffix(".",DB_PART,".qual.anno")),"w");
-      QV_DFILE = Fopen(Catenate(pwd,PATHSEP,root,Numbered_Suffix(".",DB_PART,".qual.data")),"w");
-    }
-  else
-    { QV_AFILE = Fopen(Catenate(pwd,PATHSEP,root,".qual.anno"),"w");
-      QV_DFILE = Fopen(Catenate(pwd,PATHSEP,root,".qual.data"),"w");
-    }
-  if (QV_AFILE == NULL || QV_DFILE == NULL)
-    exit (1);
-
-  { int size, nreads;
-
-    nreads = DB_LAST - DB_FIRST;
-    size   = sizeof(int64);
-    fwrite(&nreads,sizeof(int),1,QV_AFILE);
-    fwrite(&size,sizeof(int),1,QV_AFILE);
-    QV_INDEX = 0;
-    fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
-  }
-
-  free(pwd);
-  free(root);
-
-  //  Open overlap file
-
-  pwd   = PathTo(argv[2]);
-  if (DB_PART > 0)
-    input = Fopen(Catenate(pwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
-  else
-    input = Fopen(Catenate(pwd,"/",las,".las"),"r");
-  if (input == NULL)
-    exit (1);
-
-  free(pwd);
-  free(las);
-
   //  Initialize statistics gathering
 
   if (VERBOSE)
     { int i;
 
+      nreads = 0;
+      totlen = 0;
       for (i = 0; i <= MAXQV; i++)
         qgram[i] = sgram[i] = 0;
 
-      printf("\nDASqv -c%d %s %s\n",COVERAGE,argv[1],argv[2]);
+      printf("\nDASqv -c%d %s",COVERAGE,argv[1]);
+      for (i = 2; i < argc; i++)
+        printf(" %s",argv[i]);
+      printf("\n");
     }
 
-  //  Get trace point spacing information
+  //  Determine if overlap block is being processed and if so get first and last read
+  //    from .db file
 
-  fread(&novl,sizeof(int64),1,input);
-  fread(&TRACE_SPACING,sizeof(int),1,input);
+  dpwd = PathTo(argv[1]);
+  root = Root(argv[1],".db");
 
-  //  Process each read pile
+  for (c = 2; c < argc; c++)
+    { las  = Root(argv[c],".las");
 
-  make_a_pass(input,CALCULATE_QVS,1);
+      { FILE *dbfile;
+        char  buffer[2*MAX_NAME+100];
+        char *p, *eptr;
+        int   i, part, nfiles, nblocks, cutoff, all, oindx;
+        int64 size;
+
+        DB_PART  = 0;
+        DB_FIRST = 0;
+        DB_LAST  = DB->nreads;
+
+        p = rindex(las,'.');
+        if (p != NULL)
+          { part = strtol(p+1,&eptr,10);
+            if (*eptr == '\0' && eptr != p+1)
+              { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
+                if (dbfile == NULL)
+                  exit (1);
+                if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
+                  SYSTEM_ERROR
+                for (i = 0; i < nfiles; i++)
+                  if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
+                    SYSTEM_ERROR
+                if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
+                  SYSTEM_ERROR
+                if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
+                  SYSTEM_ERROR
+                for (i = 1; i <= part; i++)
+                  if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
+                    SYSTEM_ERROR
+                if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
+                  SYSTEM_ERROR
+                fclose(dbfile);
+                DB_PART = part;
+                *p = '\0';
+              }
+          }
+      }
+
+      //   Set up preliminary trimming track
+
+      if (DB_PART > 0)
+        { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                    Numbered_Suffix(".",DB_PART,".qual.anno")),"w");
+          QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                    Numbered_Suffix(".",DB_PART,".qual.data")),"w");
+        }
+      else
+        { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.anno"),"w");
+          QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.data"),"w");
+        }
+      if (QV_AFILE == NULL || QV_DFILE == NULL)
+        exit (1);
+
+      { int size, nreads;
+
+        nreads = DB_LAST - DB_FIRST;
+        size   = sizeof(int64);
+        fwrite(&nreads,sizeof(int),1,QV_AFILE);
+        fwrite(&size,sizeof(int),1,QV_AFILE);
+        QV_INDEX = 0;
+        fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
+      }
+
+      //  Open overlap file
+
+      lpwd = PathTo(argv[c]);
+      if (DB_PART > 0)
+        input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
+      else
+        input = Fopen(Catenate(lpwd,"/",las,".las"),"r");
+      if (input == NULL)
+        exit (1);
+
+      free(lpwd);
+      free(las);
+
+      //  Get trace point spacing information
+
+      fread(&novl,sizeof(int64),1,input);
+      fread(&TRACE_SPACING,sizeof(int),1,input);
+
+      //  Process each read pile
+
+      make_a_pass(input,CALCULATE_QVS,1);
+
+      fclose(QV_AFILE);
+      fclose(QV_DFILE);
+    }
 
   //  If verbose output statistics summary to stdout
 
   if (VERBOSE)
-    { int   i, nreads;
+    { int   i;
       int64 ssum, qsum;
       int64 stotal, qtotal;
-      int64 totlen;
-
-      nreads = DB_LAST - DB_FIRST;
-      if (DB_PART > 0)
-        { totlen = 0;
-          for (i = DB_FIRST; i < DB_LAST; i++)
-            totlen += DB->reads[i].rlen;
-        }
-      else
-        totlen = DB->totlen;
 
       printf("\nInput:  ");
-      Print_Number((int64) nreads,7,stdout);
+      Print_Number(nreads,7,stdout);
       printf("reads,  ");
       Print_Number(totlen,12,stdout);
       printf(" bases\n");
@@ -605,9 +609,10 @@ int main(int argc, char *argv[])
 
   //  Clean up
 
-  fclose(QV_AFILE);
-  fclose(QV_DFILE);
+  free(dpwd);
+  free(root);
 
+  Close_DB(DB);
   free(Prog_Name);
 
   exit (0);
