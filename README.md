@@ -5,7 +5,7 @@
 ## _First:   March 27, 2016_
 
 For typeset documentation, examples of use, and design philosophy please go to
-my [blog](https://dazzlerblog.wordpress.com/command-guides/dascrubber-commands).
+my [blog](https://dazzlerblog.wordpress.com/command-guides/dascrubber-command-guide).
 
 This is still an incomplete release.
 The current set of commands provide a pipeline that one can use to scrub reads and if desired
@@ -181,8 +181,8 @@ with LAmerge to form block .las files for the new database.
 The idea of this program is to avoid having to run daligner again on the patched reads, but
 rather to simply refine the alignments already computed with respect to the new read set.  It
 has the draw back that there is some small chance that there are previously undetected overlaps
-between reads now that they are patched.  This is contrasted with the speedup of the new process
-which is about 50% faster than the original daligner run.  It is not clear to us that this is
-worthwhile, and in the future, we will rather produced corrected reads as opposed to patched
-reads that can be aligned at a much higher stringency / error rate and thus aligned much more
-efficiently in time.
+between reads now that they are patched, and the patched trace point encoding, while stillable
+to deliver alignments are no longer usable for quality estimation as the tracepoint spacing in
+the A-read becomes irregular.  This is contrasted with the speedup of the new process which
+is roughly 40X faster than the original daligner run and the collection of overlaps in the
+output can be feed directly into a string graph construction process.
