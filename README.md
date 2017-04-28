@@ -4,7 +4,10 @@
 ## _Author:  Gene Myers_
 ## _First:   March 27, 2016_
 
-The latest source code can be found on Github here.  This is still an incomplete release.
+For typeset documentation, examples of use, and design philosophy please go to
+my [blog](https://dazzlerblog.wordpress.com/command-guides/dascrubber-commands).
+
+This is still an incomplete release.
 The current set of commands provide a pipeline that one can use to scrub reads and if desired
 to scrub the alignment piles (with DASrealign).  Ultimately DASpatch/DASedit and DASrealign will
 be replaced with more powerful programs that correct reads and not only scrub alignment piles,
