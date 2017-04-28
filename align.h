@@ -113,11 +113,30 @@ typedef struct
      the sequence before calling Compute_Trace or Print_Alignment.  Complement_Seq complements
      the sequence a of length n.  The operation does the complementation/reversal in place.
      Calling it a second time on a given fragment restores it to its original state.
+
+     With the introduction of the DAMAPPER, we need to code chains of alignments between a
+     pair of sequences.  The alignments of a chain are expected to be found in order either on
+     a file or in memory, where the START_FLAG marks the first alignment and the NEXT_FLAG all
+     subsequent alignmenst in a chain.  A chain of a single LA is marked with the START_FLAG.
+     The BEST_FLAG marks one of the best chains for a pair of sequences.  The convention is
+     that either every record has either a START- or NEXT-flag, or none of them do (e.g. as
+     produced by daligner), so one can always check the flags of the first alignment to see
+     whether or not the chain concept applies to a given collection or not.
 ***/
 
-#define COMP(x)  ((x) & 0x1)
+#define COMP_FLAG  0x1
+#define ACOMP_FLAG 0x2   //  A-sequence is complemented, not B !  Only Local_Alignment notices
 
-#define COMP_FLAG 0x1
+#define COMP(x)   ((x) & COMP_FLAG)
+#define ACOMP(x)  ((x) & ACOMP_FLAG)
+
+#define START_FLAG 0x4   //  LA is the first of a chain of 1 or more la's
+#define NEXT_FLAG  0x8   //  LA is the next segment of a chain.
+#define BEST_FLAG  0x10  //  This is the start of the best chain
+
+#define CHAIN_START(x)  ((x) & START_FLAG)
+#define CHAIN_NEXT(x)   ((x) & NEXT_FLAG)
+#define BEST_CHAIN(x)   ((x) & BEST_FLAG)
 
 typedef struct
   { Path   *path;
@@ -306,7 +325,7 @@ typedef struct {
      accommodate the trace where each value take 'tbytes' bytes (1 if uint8 or 2 if uint16).
 
      Write_Overlap write 'ovl' to stream 'output' followed by its trace vector (if any) that
-     occupies 'tbytes' bytes per value.  
+     occupies 'tbytes' bytes per value.  It returns non-zero if there was an error writing.
 
      Print_Overlap prints an ASCII version of the contents of 'ovl' to stream 'output'
      where the trace occupes 'tbytes' per value and the print out is indented from the left
@@ -324,7 +343,7 @@ typedef struct {
   int Read_Overlap(FILE *input, Overlap *ovl);
   int Read_Trace(FILE *innput, Overlap *ovl, int tbytes);
 
-  void Write_Overlap(FILE *output, Overlap *ovl, int tbytes);
+  int  Write_Overlap(FILE *output, Overlap *ovl, int tbytes);
   void Print_Overlap(FILE *output, Overlap *ovl, int tbytes, int indent);
 
   void Compress_TraceTo8(Overlap *ovl);
