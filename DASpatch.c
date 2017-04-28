@@ -568,7 +568,7 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
         n = 0;
       else
         { if (trace)
-            memcpy(paths,paths+pcur,sizeof(uint16)*ovls[0].path.tlen);
+            memmove(paths,paths+pcur,sizeof(uint16)*ovls[0].path.tlen);
           n = 1;
           pcur = ovls[0].path.tlen;
           while (1)

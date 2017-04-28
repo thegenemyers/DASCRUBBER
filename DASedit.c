@@ -164,7 +164,7 @@ static int Load_Model(int *patch, char *target, int depth)
           rend = TRIM[gb+1];
           if (rend > bend)
             rend = bend;
-          memcpy(target+tlen,bseq+lend,rend-lend);
+          memmove(target+tlen,bseq+lend,rend-lend);
           tlen += rend-lend; 
 #ifdef DEBUG_PATCHING
           printf("%*s  Piece %d,%d\n",2*depth,"",lend,rend);
@@ -179,7 +179,7 @@ static int Load_Model(int *patch, char *target, int depth)
           if (rend > bbeg)
             { if (rend > bend)
                 rend = bend;
-              memcpy(target+tlen,bseq+bbeg,rend-bbeg);
+              memmove(target+tlen,bseq+bbeg,rend-bbeg);
               tlen += rend-bbeg;
 #ifdef DEBUG_PATCHING
               printf("%*s  Piece %d,%d\n",2*depth,"",bbeg,rend);
@@ -496,7 +496,7 @@ int main(int argc, char *argv[])
             rend = TRIM[gb+1];
             blen = rend - lend;
 
-            memcpy(target+tlen,aseq+lend,blen);
+            memmove(target+tlen,aseq+lend,blen);
             tlen += blen;
 #ifdef DEBUG_PATCHING
             printf("  Piece %d,%d (%d)\n",lend,rend,bi);
