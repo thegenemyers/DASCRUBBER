@@ -602,26 +602,35 @@ static void EXTENDER(int aread, Overlap *ovls, int novl)
 
                 alpos = -1;
                 for (o = ob; o < oe; o++)
-                  { path = &(ovls[o].path);
+                  { int bbreal, bereal;
+
+                    path = &(ovls[o].path);
+                    if (COMP(ovls[o].flags))
+                      { clen = BMAP[hb-1];
+                        bbreal = clen-path->bepos;
+                        bereal = clen-path->bbpos;
+                      }
+                    else
+                      { clen = 0;
+                        bbreal = path->bbpos;
+                        bereal = path->bepos;
+                      }
+  
 #ifdef OUTLINE
-                    printf("    OVL %d: [%d,%d] [%d,%d]\n",o,
-                           path->abpos,path->aepos,path->bbpos,path->bepos);
+                    printf("    OVL %d: [%d,%d] %c [%d,%d]\n",o,
+                           path->abpos,path->aepos,(clen==0)?'n':'c',bbreal,bereal);
                     fflush(stdout);
 #endif
 
                     if (path->abpos <= aend-MIN_LEN && path->aepos >= abeg+MIN_LEN &&
-                        path->bbpos <= bend-MIN_LEN && path->bepos >= bbeg+MIN_LEN)
+                             bbreal <= bend-MIN_LEN &&      bereal >= bbeg+MIN_LEN)
 
                       { ralign->bseq  = falign->bseq  = ((char *) BDB->bases) + BDB->reads[bp].boff;
                         ralign->blen  = falign->blen  = blen = BDB->reads[bp].rlen;
                         ralign->flags = falign->flags = ovls[o].flags;
 
                         if (COMP(ralign->flags))
-                          { clen = BMAP[hb-1];
-                            Complement_Seq(ralign->bseq,blen);
-                          }
-                        else
-                          clen = 0;
+                          Complement_Seq(ralign->bseq,blen);
 
 #ifdef SHOW_MAP
                         print_map(BMAP,hb,he,clen);
