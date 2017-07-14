@@ -897,6 +897,9 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
       SMALL  = 0;
     }
 
+  if (novl <= 0)
+    return (0);
+
   Read_Overlap(input,ovls);
   if (trace)
     { if (ovls[0].path.tlen > pmax)
