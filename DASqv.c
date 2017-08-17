@@ -250,7 +250,7 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
       cick += MAXQV1;
 
 #ifdef QV_DEBUG
-      printf(" >> %2d %2d = %2d <<\n",qvn,qvc,qvec[i]);
+      printf(" >> %2d(%d) %2d(%d) = %2d <<\n",qvn,cntn,qvc,cntc,qvec[i]);
 #endif
     }
 
@@ -567,6 +567,8 @@ int main(int argc, char *argv[])
 
       make_a_pass(input,CALCULATE_QVS,1);
 
+      fwrite(&COVERAGE,sizeof(int),1,QV_AFILE);
+
       fclose(QV_AFILE);
       fclose(QV_DFILE);
     }
@@ -577,6 +579,7 @@ int main(int argc, char *argv[])
     { int   i;
       int64 ssum, qsum;
       int64 stotal, qtotal;
+      int   gval, bval;
 
       printf("\nInput:  ");
       Print_Number(nreads,7,stdout);
@@ -597,6 +600,7 @@ int main(int argc, char *argv[])
       printf("\n    %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n\n",
              MAXQV,sgram[MAXQV],(100.*ssum)/stotal,qgram[MAXQV],(100.*qsum)/qtotal);
 
+      bval    = gval = -1;
       qtotal -= qsum;
       stotal -= ssum;
       ssum = qsum = 0;
@@ -607,7 +611,13 @@ int main(int argc, char *argv[])
             printf("    %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n",
                    i,sgram[i],(100.*ssum)/stotal,
                      qgram[i],(100.*qsum)/qtotal);
+            if ((100.*qsum)/qtotal > 7. && bval < 0)
+              bval = i;
+            if ((100.*qsum)/qtotal > 20. && gval < 0)
+              gval = i;
           }
+
+      printf("\n  Recommend \'DAStrim -g%d -b%d'\n\n",gval,bval);
     }
 
   //  Clean up

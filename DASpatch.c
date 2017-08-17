@@ -41,7 +41,9 @@ static int     VERBOSE;
 #define LOWQ  0   //  Gap is spanned by many LAs and patchable
 #define SPAN  1   //  Gap has many paired LAs and patchable
 #define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define NOPAT 3   //  Gap could not be patched
+#define ADPRE 3   //  Gap is an adatper break and prefix should be removed
+#define ADSUF 4   //  Gap is an adatper break and suffix should be removed
+#define NOPAT 3   //  Gap could not be patched (internal only)
 
 #define  COVER_LEN     400  //  An overlap covers a point if it extends COVER_LEN to either side.
 #define  ANCHOR_MATCH  .25  //  Delta in trace interval at both ends of patch must be < this %.
@@ -694,6 +696,26 @@ int main(int argc, char *argv[])
         fread(&GOOD_QV,sizeof(int),1,afile);
         fread(&BAD_QV,sizeof(int),1,afile);
         fclose(afile);
+
+        { int a, t, x;
+          int tb, te;
+
+          x = 0;
+          for (a = 0; a < DB->nreads; a++)
+            { tb = TRIM_IDX[a];
+              te = TRIM_IDX[a+1];
+              if (tb+2 < te)
+                { if (TRIM[tb+2] == ADPRE)
+                    tb += 3;
+                  if (TRIM[te-3] == ADSUF)
+                    te -= 3; 
+                }
+              TRIM_IDX[a] = x;
+              for (t = tb; t < te; t++)
+                TRIM[x++] = TRIM[t]; 
+            }
+          TRIM_IDX[DB->nreads] = x;
+        }
       }
     else
       { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);

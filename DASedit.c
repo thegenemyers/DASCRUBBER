@@ -70,6 +70,13 @@
 
 static char *Usage = "[-v] [-x<int>] <source:db> <target:db>";
 
+//  Gap states
+
+#define LOWQ  0   //  Gap is spanned by many LAs and patchable
+#define SPAN  1   //  Gap has many paired LAs and patchable
+#define SPLIT 2   //  Gap is a chimer or an unpatchable gap
+#define ADPRE 3   //  Gap is an adatper break and prefix should be removed
+#define ADSUF 4   //  Gap is an adatper break and suffix should be removed
 
 //  Global Variables (must exist across the processing of each pile)
 
@@ -386,6 +393,26 @@ int main(int argc, char *argv[])
         TRIM     = (int *) track->data;
         for (i = 0; i <= nreads; i++)
           TRIM_IDX[i] /= sizeof(int);
+
+        { int a, t, x;
+          int tb, te;
+
+          x = 0;
+          for (a = 0; a < DB->nreads; a++)
+            { tb = TRIM_IDX[a];
+              te = TRIM_IDX[a+1];
+              if (tb+2 < te)
+                { if (TRIM[tb+2] == ADPRE)
+                    tb += 3;
+                  if (TRIM[te-3] == ADSUF)
+                    te -= 3;
+                }
+              TRIM_IDX[a] = x;
+              for (t = tb; t < te; t++)
+                TRIM[x++] = TRIM[t];
+            }
+          TRIM_IDX[DB->nreads] = x;
+        }
       }
     else
       { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);

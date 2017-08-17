@@ -48,8 +48,12 @@ static int     VERBOSE;
 #define LOWQ  0   //  Gap is spanned by many LAs and patchable
 #define SPAN  1   //  Gap has many paired LAs and patchable
 #define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define ADAPT 3   //  Gap is due to adaptemer
+#define ADPRE 3   //  Gap is due to adaptemer, trim prefix interval to left
+#define ADSUF 4   //  Gap is due to adaptemer, trim suffix interval to right
+#define ADAPT 3   //  Gap is due to adaptemer (internal only)
 
+static int AdPre = ADPRE;
+static int AdSuf = ADSUF;
 
 //  Good patch constants
 
@@ -1835,7 +1839,7 @@ static void GAPS(int aread, Overlap *ovls, int novl)
   }
 #endif
 
-  //   Find largest non-adaptemer/subread range
+  //   Find largest non-adaptemer/subread range: block[abeg..aend)
 
   { int cmax, amax, abeg = 0, aend = 0;
     int p, i;
@@ -1904,41 +1908,42 @@ static void GAPS(int aread, Overlap *ovls, int novl)
           }
       }
 
-    //  Retain largest subread
-
-    nblk    = aend-abeg;
-    block  += abeg;
-    status += abeg;
-  }
-
 #ifdef ANNOTATE
-  { int i;
-
-    fwrite(&(block[0].beg),sizeof(int),1,KP_DFILE);
-    for (i = 1; i < nblk; i++)
+    fwrite(&(block[abeg].beg),sizeof(int),1,KP_DFILE);
+    for (i = abeg+1; i < aend; i++)
       if (status[i] == SPLIT)
         { fwrite(&(block[i-1].end),sizeof(int),1,KP_DFILE);
           fwrite(&(block[i].beg),sizeof(int),1,KP_DFILE);
           KP_INDEX += 2*sizeof(int);
         }
-    fwrite(&(block[nblk-1].end),sizeof(int),1,KP_DFILE);
+    fwrite(&(block[aend-1].end),sizeof(int),1,KP_DFILE);
     KP_INDEX += 2*sizeof(int);
     fwrite(&KP_INDEX,sizeof(int64),1,KP_AFILE);
-  }
 #endif
 
   //  Output .trim track for this read
 
-  { int i;
-
-    fwrite(&(block[0].beg),sizeof(int),1,TR_DFILE);
-    fwrite(&(block[0].end),sizeof(int),1,TR_DFILE);
-    for (i = 1; i < nblk; i++)
+    if (abeg > 0)
+      { fwrite(&(block[0].beg),sizeof(int),1,TR_DFILE);
+        fwrite(&(block[abeg-1].end),sizeof(int),1,TR_DFILE);
+        fwrite(&AdPre,sizeof(int),1,TR_DFILE);
+        TR_INDEX += 3*sizeof(int);
+      }
+    fwrite(&(block[abeg].beg),sizeof(int),1,TR_DFILE);
+    fwrite(&(block[abeg].end),sizeof(int),1,TR_DFILE);
+    TR_INDEX += 2*sizeof(int);
+    for (i = abeg+1; i < aend; i++)
       { fwrite(status+i,sizeof(int),1,TR_DFILE);
         fwrite(&(block[i].beg),sizeof(int),1,TR_DFILE);
         fwrite(&(block[i].end),sizeof(int),1,TR_DFILE);
+        TR_INDEX += 3*sizeof(int);
       }
-    TR_INDEX += (3*nblk-1)*sizeof(int);
+    if (aend < nblk)
+      { fwrite(&AdSuf,sizeof(int),1,TR_DFILE);
+        fwrite(&(block[aend].beg),sizeof(int),1,TR_DFILE);
+        fwrite(&(block[nblk-1].end),sizeof(int),1,TR_DFILE);
+        TR_INDEX += 3*sizeof(int);
+      }
     fwrite(&TR_INDEX,sizeof(int64),1,TR_AFILE);
   }
 }
