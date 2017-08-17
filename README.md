@@ -186,3 +186,25 @@ to deliver alignments are no longer usable for quality estimation as the tracepo
 the A-read becomes irregular.  This is contrasted with the speedup of the new process which
 is roughly 40X faster than the original daligner run and the collection of overlaps in the
 output can be feed directly into a string graph construction process.
+
+```
+7. REPqv <subject:db> ...
+```
+
+This command takes as input a sequence of databases or blocks \<source\> and for each outputs
+a histogram of the intrinsic quality values of the reads in the source along with a
+recommendation of the -g and -b values with which to run DAStrim.  The .qual track produced
+by DASqv must be present for all sources referred to.  The command is a quick way to get
+the -v output of DASqv at any time after producing the intrinsic quality values and to get
+the histogram for the entire data base (as opposed to a block of the database).
+
+```
+8. REPtrim <subject:db> ...
+```
+
+This command takes as input a sequence of databases or blocks \<source\> and for each outputs
+the scrubbing statistics for the source, i.e. the same report produced by DAStrim with
+the -v option set.  The .trim track produced by DAStrim must be present for all sources
+referred to.  The command is a quick way to get the -v output of DAStrim at any time after
+the fact and to get the statistics for the entire data base (as opposed to a block of the
+database).
