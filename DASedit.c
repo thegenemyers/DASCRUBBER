@@ -103,26 +103,6 @@ void Print_Seq(char *target, int tlen)
   printf("\n");
 }
 
-//  Complement the sequence in fragment aseq.  The operation does the
-//  complementation/reversal in place.  Calling it a second time on a
-//  given fragment restores it to its original state/
-
-void Complement_Seq(char *aseq, int len)
-{ char *s, *t;
-  int   c;
-
-  s = aseq;
-  t = aseq + (len-1);
-  while (s < t)
-    { c    = 3 - *s;
-      *s++ = (char) (3 - *t);
-      *t-- = (char) c;
-    }
-  if (s == t)
-    *s = (char) (3 - *s);
-}
-
-
 #define STACK_SIZE 50
 
 static char *BSTACK[STACK_SIZE];
@@ -225,6 +205,10 @@ int main(int argc, char *argv[])
   char       *pwd2, *root2;
   int         VERBOSE;
   int         CUTOFF;
+  int         GOOD_QV;
+  int         BAD_QV;
+  int         COVERAGE;
+  int         HGAP_MIN;
 
   int         nfiles;        //  contents of source .db file
   int         nblocks;
@@ -389,10 +373,45 @@ int main(int argc, char *argv[])
 
     track = Load_Track(DB,"trim");
     if (track != NULL)
-      { TRIM_IDX = (int64 *) track->anno;
+      { FILE *afile;
+        int   size, tracklen, extra;
+
+        TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
         for (i = 0; i <= nreads; i++)
           TRIM_IDX[i] /= sizeof(int);
+
+        //  if newer .trim tracks with -g, -b, -c, -H meta data, grab it
+
+        afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
+        fread(&tracklen,sizeof(int),1,afile);
+        fread(&size,sizeof(int),1,afile);
+        fseeko(afile,0,SEEK_END);
+        extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+        fseeko(afile,-extra,SEEK_END);
+        if (extra == 4*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            fread(&COVERAGE,sizeof(int),1,afile);
+            fread(&HGAP_MIN,sizeof(int),1,afile);
+          }
+        else if (extra == 3*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            fread(&COVERAGE,sizeof(int),1,afile);
+            HGAP_MIN = 0;
+          }
+        else if (extra == 2*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            COVERAGE = -1;
+            HGAP_MIN = 0;
+          }
+        else
+          { fprintf(stderr,"%s: trim annotation is out of date, rerun DAStrim\n",Prog_Name);
+            exit (1);
+          }
+        fclose(afile);
 
         { int a, t, x;
           int tb, te;
@@ -467,6 +486,7 @@ int main(int argc, char *argv[])
 
     int64 ntrim, nshort;
     int64 nttot, nstot;
+    int64 htrim, httot;
 
     ni = 0;
     fwrite(&ni,sizeof(int),1,MP_AFILE);
@@ -484,6 +504,7 @@ int main(int argc, char *argv[])
 
     ntrim = nshort = 0;
     nstot = nttot = 0;
+    htrim = httot = 0;
     ntot  = 0;
     nnew  = nmax = 0;
 
@@ -503,6 +524,13 @@ int main(int argc, char *argv[])
 #ifdef DEBUG_PATCHING
         printf("Doing %d\n",i);
 #endif
+
+        if (reads[i].rlen < HGAP_MIN)
+          { segfate[bi++] = TRIMMED;
+            htrim += 1;
+            httot += reads[i].rlen;
+            continue;
+          }
 
         if (ge <= gb)
           { segfate[bi++] = TRIMMED;
@@ -622,10 +650,21 @@ int main(int argc, char *argv[])
 
     if (VERBOSE)
       { printf("\n  ");
-        Print_Number(DB->nreads,0,stdout);
+
+        if (htrim > 0)
+          { Print_Number(htrim,0,stdout);
+            printf(" reads and ");
+            Print_Number(httot,0,stdout);
+            printf(" bases in reads < H-length (%d)\n\n  ",HGAP_MIN);
+          }
+
+        Print_Number(DB->nreads-htrim,0,stdout);
         printf(" reads and ");
-        Print_Number(DB->totlen,0,stdout);
-        printf(" bases in source DB\n\n  ");
+        Print_Number(DB->totlen-httot,0,stdout);
+        if (htrim > 0)
+          printf(" bases in reads >= H-length in source DB \n\n  ");
+        else
+          printf(" bases in source DB\n\n  ");
 
         Print_Number(ntrim,0,stdout);
         printf(" reads and ");

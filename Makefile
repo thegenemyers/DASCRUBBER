@@ -21,8 +21,8 @@ REPtrim: REPtrim.c DB.c DB.h QV.c QV.h
 DASpatch: DASpatch.c align.h align.c DB.c DB.h QV.c QV.h
 	gcc $(CFLAGS) -o DASpatch DASpatch.c align.c DB.c QV.c -lm
 
-DASedit: DASedit.c DB.c DB.h QV.c QV.h
-	gcc $(CFLAGS) -o DASedit DASedit.c DB.c QV.c -lm
+DASedit: DASedit.c align.c align.h DB.c DB.h QV.c QV.h
+	gcc $(CFLAGS) -o DASedit DASedit.c align.c DB.c QV.c -lm
 
 DASmap: DASmap.c DB.c DB.h QV.c QV.h
 	gcc $(CFLAGS) -o DASmap DASmap.c DB.c QV.c -lm

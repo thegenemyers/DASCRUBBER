@@ -23,7 +23,7 @@ of reads.  The \"DAS\" suite consists of a pipeline of several programs that in 
 the task of scrubbing.
 
 ```
-1. DASqv [-v] -c<int> <subject:db> <overlaps:las> ...
+1. DASqv [-v] [-H<int>] -c<int> <subject:db> <overlaps:las> ...
 ```
 
 This command takes as input a database \<source\> and a sequence of sorted local alignments
@@ -44,7 +44,12 @@ in question.  All quality values over 50 are clipped to 50.
 The -v option prints out a histogram of the segment align matches, and the quality values
 produced.  This histogram is useful in assessing, for a given data set, what constitutes the
 threshold -g and -b, to be used by down stream commands, for what is definitely a good segment
-and what is definitely a bad segment.
+and what is definitely a bad segment.  The -H option is for HGAP-based assembly (see the -H
+option of daligner) wherein only reads longer than the -H parameter are considered for overlap,
+scrubbing, and assembly.  With this option set, DASqv and all subsequent commands in the
+scrubbing pipeline, only perform their functions on reads of length -H or more.  All other
+reads are used in the overlap piles for H-reads to help assess and scrub the H-reads, but
+are themselves not scrubbed.
 
 The quality values are written to a .qual track, that can be viewed by calling DBdump with
 the -i option set (\"i\" for \"intrinsic QV\").  If the overlap file contains a block number

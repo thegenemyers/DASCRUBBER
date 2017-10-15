@@ -23,7 +23,7 @@
 
 #undef  QV_DEBUG
 
-static char *Usage = "[-v] -c<int> <source:db> <overlaps:las> ...";
+static char *Usage = "[-v] [-H<int>] -c<int> <source:db> <overlaps:las> ...";
 
 #define  MAXQV   50     //  Max QV score is 50
 #define  MAXQV1  51
@@ -31,8 +31,9 @@ static char *Usage = "[-v] -c<int> <source:db> <overlaps:las> ...";
 
 #define  PARTIAL .20    //  Partial terminal segments covering this percentage are scored
 
-static int     QV_DEEP; //  # of best diffs to average for QV score
 static int     VERBOSE;
+static int     QV_DEEP;   //  # of best diffs to average for QV score
+static int     HGAP_MIN;  //  Under this length do not process for HGAP
 
 static int     TRACE_SPACING;  //  Trace spacing (from .las file)
 static int     TBYTES;         //  Bytes per trace segment (from .las file)
@@ -51,7 +52,6 @@ static int64   QV_INDEX;   //  Current index into .qual.data file
 static int64 nreads, totlen;
 static int64 qgram[MAXQV1], sgram[MAXQV1];
 
-
 //  For each pile, calculate QV scores of the aread at tick spacing TRACE_SPACING
 
 static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
@@ -67,6 +67,11 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
 
   alen  = DB->reads[aread].rlen;
   atick = (alen + (TRACE_SPACING-1))/TRACE_SPACING;
+
+  if (alen < HGAP_MIN)
+    { fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
+      return;
+    }
 
 #if defined(QV_DEBUG)
   printf("AREAD %d",aread);
@@ -398,6 +403,7 @@ int main(int argc, char *argv[])
     ARG_INIT("DASqv")
 
     COVERAGE = -1;
+    HGAP_MIN = 0;
 
     j = 1;
     for (i = 1; i < argc; i++)
@@ -408,6 +414,9 @@ int main(int argc, char *argv[])
             break;
           case 'c':
             ARG_POSITIVE(COVERAGE,"Voting depth")
+            break;
+          case 'H':
+            ARG_POSITIVE(HGAP_MIN,"HGAP threshold (in bp.s)")
             break;
         }
       else
@@ -535,11 +544,11 @@ int main(int argc, char *argv[])
       if (QV_AFILE == NULL || QV_DFILE == NULL)
         exit (1);
 
-      { int size, nreads;
+      { int size, length;
 
-        nreads = DB_LAST - DB_FIRST;
+        length = DB_LAST - DB_FIRST;
         size   = sizeof(int64);
-        fwrite(&nreads,sizeof(int),1,QV_AFILE);
+        fwrite(&length,sizeof(int),1,QV_AFILE);
         fwrite(&size,sizeof(int),1,QV_AFILE);
         QV_INDEX = 0;
         fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
@@ -568,6 +577,7 @@ int main(int argc, char *argv[])
       make_a_pass(input,CALCULATE_QVS,1);
 
       fwrite(&COVERAGE,sizeof(int),1,QV_AFILE);
+      fwrite(&HGAP_MIN,sizeof(int),1,QV_AFILE);
 
       fclose(QV_AFILE);
       fclose(QV_DFILE);
@@ -585,7 +595,13 @@ int main(int argc, char *argv[])
       Print_Number(nreads,7,stdout);
       printf("reads,  ");
       Print_Number(totlen,12,stdout);
-      printf(" bases\n");
+      printf(" bases");
+      if (HGAP_MIN > 0)
+        { printf(" (another ");
+          Print_Number((DB_LAST-DB_FIRST) - nreads,0,stdout);
+          printf(" were < H-length)");
+        }
+      printf("\n");
 
       stotal = qtotal = 0;
       for (i = 0; i <= MAXQV; i++)

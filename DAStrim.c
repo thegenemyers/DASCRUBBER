@@ -41,6 +41,7 @@ static char *Usage = " [-v] -g<int> -b<int> <source:db> <overlaps:las> ...";
 
 static int     BAD_QV;     //  qv >= and you are "bad"
 static int     GOOD_QV;    //  qv <= and you are "good"
+static int     HGAP_MIN;   //  less than this length do not process for HGAP
 static int     VERBOSE;
 
 //  Gap states
@@ -1094,6 +1095,13 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   uint8   *qb;
   int      avg, anc, bad;
 
+  bread = lov->bread;
+  bcomp = COMP(lov->flags);
+  blen  = DB->reads[bread].rlen;
+
+  if (blen < HGAP_MIN)
+    return (NULL);
+
   if (lft > lov->path.aepos || rgt < rov->path.abpos)   // Cannot anchor
     return (NULL);
   if (lov->path.abpos > lft-TRACE_SPACING || rgt+TRACE_SPACING > rov->path.aepos)
@@ -1125,9 +1133,6 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   if (bb >= be)
     return (NULL);
 
-  bread = lov->bread;
-  bcomp = COMP(lov->flags);
-
   ans.bread = bread;
   ans.comp  = bcomp;
   ans.beg   = bb;
@@ -1137,8 +1142,7 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   //  Compute metrics for b-read patch
 
   if (bcomp)
-    { blen = DB->reads[bread].rlen;
-      t  = blen - be;
+    { t  = blen - be;
       be = blen - bb;
       bb = t;
     }
@@ -1765,6 +1769,22 @@ static void GAPS(int aread, Overlap *ovls, int novl)
 #endif
 
   alen = DB->reads[aread].rlen;
+  if (alen < HGAP_MIN)
+    {
+#ifdef ANNOTATE
+      fwrite(&HQ_INDEX,sizeof(int64),1,HQ_AFILE);
+      fwrite(&SN_INDEX,sizeof(int64),1,SN_AFILE);
+      fwrite(&SP_INDEX,sizeof(int64),1,SP_AFILE);
+      fwrite(&AD_INDEX,sizeof(int64),1,AD_AFILE);
+
+      fwrite(&HL_INDEX,sizeof(int64),1,HL_AFILE);
+
+      fwrite(&KP_INDEX,sizeof(int64),1,KP_AFILE);
+#endif
+
+      fwrite(&TR_INDEX,sizeof(int64),1,TR_AFILE);
+      return;
+    }
 
   if (VERBOSE)
     { nreads += 1;
@@ -1866,6 +1886,13 @@ static void GAPS(int aread, Overlap *ovls, int novl)
         abeg = p;
         aend = nblk;
       }
+
+    if (block[aend-1].end - block[aend-1].beg < TRACE_SPACING)
+      { aend -= 1;
+        nblk -= 1;  // assert: aend == nblk && status[aend-1] = SPLIT
+      }
+    if (block[aend-1].end == alen)
+      block[aend-1].end = (alen/TRACE_SPACING)*TRACE_SPACING;
  
 #ifdef DEBUG_SUMMARY
     printf("  :::  Keeping [%d,%d]\n",block[abeg].beg,block[aend-1].end);
@@ -2071,6 +2098,7 @@ int main(int argc, char *argv[])
   int64       novl;
   HITS_TRACK *track;
   int         c;
+  int         COVERAGE;
 
   //  Process arguments
 
@@ -2142,8 +2170,33 @@ int main(int argc, char *argv[])
 
     track = Load_Track(DB,"qual");
     if (track != NULL)
-      { QV_IDX = (int64 *) track->anno;
+      { FILE *afile;
+        int   size, tracklen, extra;
+
+        QV_IDX = (int64 *) track->anno;
         QV     = (uint8 *) track->data;
+
+        //  if newer .qual tracks with -c meta data, grab it
+
+        afile = fopen(Catenate(DB->path,".","qual",".anno"),"r");
+        fread(&tracklen,sizeof(int),1,afile);
+        fread(&size,sizeof(int),1,afile);
+        fseeko(afile,0,SEEK_END);
+        extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+        fseeko(afile,-extra,SEEK_END);
+        if (extra == 2*sizeof(int))
+          { fread(&COVERAGE,sizeof(int),1,afile);
+            fread(&HGAP_MIN,sizeof(int),1,afile);
+          }
+        else if (extra == sizeof(int))
+          { fread(&COVERAGE,sizeof(int),1,afile);
+            HGAP_MIN = 0;
+          }
+        else
+          { COVERAGE = -1;
+            HGAP_MIN = 0;
+          }
+        fclose(afile);
       }
     else
       { fprintf(stderr,"%s: Must have a 'qual' track, run DASqv\n",Prog_Name);
@@ -2290,6 +2343,8 @@ int main(int argc, char *argv[])
 
       fwrite(&GOOD_QV,sizeof(int),1,TR_AFILE);
       fwrite(&BAD_QV,sizeof(int),1,TR_AFILE);
+      fwrite(&COVERAGE,sizeof(int),1,TR_AFILE);
+      fwrite(&HGAP_MIN,sizeof(int),1,TR_AFILE);
 
       fclose(TR_AFILE);
       fclose(TR_DFILE);
@@ -2322,7 +2377,13 @@ int main(int argc, char *argv[])
       Print_Number((int64) nreads,7,stdout);
       printf(" (100.0%%) reads     ");
       Print_Number(totlen,12,stdout);
-      printf(" (100.0%%) bases\n");
+      printf(" (100.0%%) bases");
+      if (HGAP_MIN > 0)
+        { printf(" (another ");
+          Print_Number((int64) ((DB_LAST-DB_FIRST)-nreads),0,stdout);
+          printf(" were < H-length)");
+        }
+      printf("\n");
 
       printf("Trimmed:  ");
       Print_Number(nelim,7,stdout);

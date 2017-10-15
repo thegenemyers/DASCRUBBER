@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
   for (c = 1; c < argc; c++)
     { int         status;
       char       *root;
-      int         i, bval, gval, cover;
+      int         i, bval, gval, cover, hgap_min;
       HITS_TRACK *track;
       int64       nreads, totlen;
       int64       qgram[MAXQV1];
@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
       track = Load_Track(DB,"qual");
       if (track != NULL)
         { FILE *afile;
-          int   size, tracklen;
+          int   size, tracklen, extra;
 
           QV_IDX = (int64 *) track->anno;
           QV     = (uint8 *) track->data;
@@ -82,11 +82,21 @@ int main(int argc, char *argv[])
             afile = fopen(Catenate(DB->path,".","qual",".anno"),"r");
           fread(&tracklen,sizeof(int),1,afile);
           fread(&size,sizeof(int),1,afile);
-          fseeko(afile,-sizeof(int),SEEK_END);
-          if (ftell(afile) == size*(tracklen+1) + 2*sizeof(int))
-            fread(&cover,sizeof(int),1,afile);
+          fseeko(afile,0,SEEK_END);
+          extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+          fseeko(afile,-extra,SEEK_END);
+          if (extra == 2*sizeof(int))
+            { fread(&cover,sizeof(int),1,afile);
+              fread(&hgap_min,sizeof(int),1,afile);
+            }
+          else if (extra == sizeof(int))
+            { fread(&cover,sizeof(int),1,afile);
+              hgap_min = 0;
+            }
           else
-            cover = -1;
+            { cover = -1;
+              hgap_min = 0;
+            }
           fclose(afile);
         }
       else
@@ -104,16 +114,33 @@ int main(int argc, char *argv[])
       for (i = 0; i < QV_IDX[nreads]; i++)
         qgram[QV[i]] += 1;
 
+      printf("\nDASqv");
       if (cover >= 0)
-        printf("\nDASqv -c%d %s\n\n",cover,root);
+        printf(" -c%d",cover);
       else
-        printf("\nDASqv %s\n\n",root);
+        printf(" -c??");
+      if (hgap_min > 0)
+        printf(" -H%d",hgap_min);
+      printf(" %s\n\n",root);
 
+      if (hgap_min > 0) 
+        { for (i = 0; i < DB->nreads; i++)
+            if (DB->reads[i].rlen < hgap_min)
+              { nreads -= 1;
+                totlen -= DB->reads[i].rlen;
+              }
+        }
       printf("  Input:  ");
       Print_Number(nreads,7,stdout);
       printf("reads,  ");
       Print_Number(totlen,12,stdout);
-      printf(" bases\n");
+      printf(" bases");
+      if (hgap_min > 0) 
+        { printf(" (another ");
+          Print_Number(DB->nreads-nreads,0,stdout);
+          printf(" were < H-length)");
+        }
+      printf("\n");
 
       if (cover >= 0)
         { int qv_deep;

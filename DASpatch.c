@@ -34,6 +34,7 @@ static char *Usage = " [-v] <source:db> <overlaps:las> ...";
 
 static int     BAD_QV;     //  qv >= and you are "bad"
 static int     GOOD_QV;    //  qv <= and you are "good"
+static int     HGAP_MIN;   //  less than this length do not process for HGAP
 static int     VERBOSE;
 
 //  Gap states
@@ -68,7 +69,7 @@ static uint8  *QV;         //  qual track values
 static int64  *TRIM_IDX;   //  trim track index
 static int    *TRIM;       //  trim track values
 
-  //  Read & Write
+  //  Write-only
 
 static FILE   *PR_AFILE;   //  .trim.anno
 static FILE   *PR_DFILE;   //  .trim.data
@@ -116,6 +117,12 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   uint8   *qb;
   int      avg, anc, bad;
 
+  bread = lov->bread;
+  bcomp = COMP(lov->flags);
+  blen = DB->reads[bread].rlen;
+  if (blen < HGAP_MIN)
+    return (NULL);
+
   if (lft > lov->path.aepos || rgt < rov->path.abpos)   // Cannot anchor
     return (NULL);
   if (lov->path.abpos > lft-TRACE_SPACING || rgt+TRACE_SPACING > rov->path.aepos)
@@ -147,14 +154,10 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   if (bb >= be)
     return (NULL);
 
-  bread = lov->bread;
-  bcomp = COMP(lov->flags);
-
   //  Compute metrics for b-read patch
 
   if (bcomp)
-    { blen = DB->reads[bread].rlen;
-      t  = blen - be;
+    { t  = blen - be;
       be = blen - bb;
       bb = t;
     }
@@ -428,11 +431,18 @@ static void PATCH_GAPS(int aread, Overlap *ovls, int novl)
   static char *status_string[4] = { "LOWQ", "SPAN", "SPLIT", "NOPAT" };
 #endif
 
+  int       alen;
   Interval  lblock, rblock;
   Patch    *patch = NULL;
   int       status;
   int       tb, te;
   int       val;
+
+  alen = DB->reads[aread].rlen;
+  if (alen < HGAP_MIN)
+    { fwrite(&PR_INDEX,sizeof(int64),1,PR_AFILE);
+      return;
+    }
 
 #if defined(DEBUG_GAP_FILL) || defined(DEBUG_SUMMARY)
   printf("\n");
@@ -627,6 +637,7 @@ int main(int argc, char *argv[])
   int64       novl;
   HITS_TRACK *track;
   int         c;
+  int         COVERAGE;
 
   //  Process arguments
 
@@ -685,16 +696,43 @@ int main(int argc, char *argv[])
     track = Load_Track(DB,"trim");
     if (track != NULL)
       { FILE *afile;
+        int   size, tracklen, extra;
 
         TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
         for (i = 0; i <= DB->nreads; i++)
           TRIM_IDX[i] /= sizeof(int);
 
+        //  if newer .trim tracks with -g, -b, -c, -H meta data, grab it
+
         afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
-        fseeko(afile,-2*sizeof(int),SEEK_END);
-        fread(&GOOD_QV,sizeof(int),1,afile);
-        fread(&BAD_QV,sizeof(int),1,afile);
+        fread(&tracklen,sizeof(int),1,afile);
+        fread(&size,sizeof(int),1,afile);
+        fseeko(afile,0,SEEK_END);
+        extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+        fseeko(afile,-extra,SEEK_END);
+        if (extra == 4*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            fread(&COVERAGE,sizeof(int),1,afile);
+            fread(&HGAP_MIN,sizeof(int),1,afile);
+          }
+        else if (extra == 3*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            fread(&COVERAGE,sizeof(int),1,afile);
+            HGAP_MIN = 0;
+          }
+        else if (extra == 2*sizeof(int))
+          { fread(&GOOD_QV,sizeof(int),1,afile);
+            fread(&BAD_QV,sizeof(int),1,afile);
+            COVERAGE = -1;
+            HGAP_MIN = 0;
+          }
+        else
+          { fprintf(stderr,"%s: trim annotation is out of date, rerun DAStrim\n",Prog_Name);
+            exit (1);
+          }
         fclose(afile);
 
         { int a, t, x;

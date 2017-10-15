@@ -35,9 +35,6 @@ static char *Usage = "<source:db> ...";
 
 static HITS_DB _DB, *DB  = &_DB;   //  Data base
 
-static int64  *QV_IDX;     //  qual track index
-static uint8  *QV;         //  qual track values
-
 static int64  *TRIM_IDX;   //  trim track index
 static int    *TRIM;       //  trim track values
 
@@ -59,7 +56,7 @@ int main(int argc, char *argv[])
     { int         status;
       char       *root;
       int         i, a, tb, te;
-      int         bval, gval, alen;
+      int         alen;
       HITS_TRACK *track;
       int64       nreads, totlen;
       int64       nelim, nelimbp;
@@ -70,6 +67,7 @@ int main(int argc, char *argv[])
       int64       nlowq, nlowqbp;
       int64       nspan, nspanbp;
       int64       nchim, nchimbp;
+      int         BAD_QV, GOOD_QV, COVERAGE, HGAP_MIN;
 
       status = Open_DB(argv[c],DB);
       if (status < 0)
@@ -80,29 +78,53 @@ int main(int argc, char *argv[])
         }
       Trim_DB(DB);
 
-      track = Load_Track(DB,"qual");
-      if (track != NULL)
-        { QV_IDX = (int64 *) track->anno;
-          QV     = (uint8 *) track->data;
-        }
-      else
-        { fprintf(stderr,"%s: Must have a 'qual' track, run DASqv\n",Prog_Name);
-          exit (1);
-        }
-
       track = Load_Track(DB,"trim");
       if (track != NULL)
         { FILE *afile;
+          int   size, tracklen, extra;
 
           TRIM_IDX = (int64 *) track->anno;
           TRIM     = (int *) track->data;
           for (i = 0; i <= DB->nreads; i++)
             TRIM_IDX[i] /= sizeof(int);
 
-          afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
-          fseeko(afile,-2*sizeof(int),SEEK_END);
-          fread(&gval,sizeof(int),1,afile);
-          fread(&bval,sizeof(int),1,afile);
+          if (DB->part)
+            { afile = fopen(Catenate(DB->path,
+                                  Numbered_Suffix(".",DB->part,"."),"trim",".anno"),"r");
+              if (afile == NULL)
+                afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
+            }
+          else
+            afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
+          fread(&tracklen,sizeof(int),1,afile);
+          fread(&size,sizeof(int),1,afile);
+          fseeko(afile,0,SEEK_END);
+          extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+          fseeko(afile,-extra,SEEK_END);
+          if (extra == 4*sizeof(int))
+            { fread(&GOOD_QV,sizeof(int),1,afile);
+              fread(&BAD_QV,sizeof(int),1,afile);
+              fread(&COVERAGE,sizeof(int),1,afile);
+              fread(&HGAP_MIN,sizeof(int),1,afile);
+            }
+          else if (extra == 3*sizeof(int))
+            { fread(&GOOD_QV,sizeof(int),1,afile);
+              fread(&BAD_QV,sizeof(int),1,afile);
+              fread(&COVERAGE,sizeof(int),1,afile);
+              HGAP_MIN = 0;
+            }
+          else if (extra == 2*sizeof(int))
+            { fread(&GOOD_QV,sizeof(int),1,afile);
+              fread(&BAD_QV,sizeof(int),1,afile);
+              COVERAGE = -1;
+              HGAP_MIN = 0;
+            }
+          else
+            { GOOD_QV  = -1;
+              BAD_QV   = -1;
+              COVERAGE = -1;
+              HGAP_MIN = 0;
+            }
           fclose(afile);
         }
       else
@@ -132,11 +154,15 @@ int main(int argc, char *argv[])
       nspanbp = 0;
       nchimbp = 0;
 
-      for (a = 0; a < nreads; a++)
+      for (a = 0; a < DB->nreads; a++)
         { tb = TRIM_IDX[a];
           te = TRIM_IDX[a+1];
           alen  = DB->reads[a].rlen;
-          if (tb >= te)
+          if (alen < HGAP_MIN)
+            { nreads -= 1;
+              totlen -= alen;
+            }
+          else if (tb >= te)
             { nelim += 1;
               nelimbp += alen;
             }
@@ -177,13 +203,30 @@ int main(int argc, char *argv[])
             }
         }
 
-      printf("\nStatistics for DAStrim -g%d -b%d %s\n\n",gval,bval,root);
+      printf("\nStatistics for DAStrim");
+      if (GOOD_QV >= 0)
+        printf(" -g%d",GOOD_QV);
+      else
+        printf(" -g??");
+      if (BAD_QV >= 0)
+        printf(" -b%d",BAD_QV);
+      else
+        printf(" -b??");
+      if (HGAP_MIN > 0)
+        printf(" [-H%d]",HGAP_MIN);
+      printf(" %s\n\n",root);
 
       printf("  Input:    ");
       Print_Number((int64) nreads,7,stdout);
       printf(" (100.0%%) reads     ");
       Print_Number(totlen,12,stdout);
-      printf(" (100.0%%) bases\n");
+      printf(" (100.0%%) bases");
+      if (HGAP_MIN > 0)
+        { printf(" (another ");
+          Print_Number((int64) (DB->nreads-nreads),0,stdout);
+          printf(" were < H-length)");
+        }
+      printf("\n");
 
       printf("  Trimmed:  ");
       Print_Number(nelim,7,stdout);
