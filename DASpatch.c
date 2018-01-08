@@ -58,7 +58,7 @@ static int ANCHOR_THRESH;
 
 static int     TRACE_SPACING;  //  Trace spacing (from .las file)
 
-static HITS_DB _DB, *DB  = &_DB;   //  Data base
+static DAZZ_DB _DB, *DB  = &_DB;   //  Data base
 static int     DB_FIRST;           //  First read of DB to process
 static int     DB_LAST;            //  Last read of DB to process (+1)
 static int     DB_PART;            //  0 if all, otherwise block #
@@ -549,11 +549,9 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
   else
     tbytes = sizeof(uint16);
 
-  if (novl <= 0)
-    return (0);
-
-  Read_Overlap(input,ovls);
-  if (trace)
+  if (Read_Overlap(input,ovls) != 0)
+    ovls[0].aread = INT32_MAX;
+  else if (trace)
     { if (ovls[0].path.tlen > pmax)
         { pmax  = 1.2*(ovls[0].path.tlen)+10000;
           paths = (uint16 *) Realloc(paths,sizeof(uint16)*pmax,"Expanding path buffer");
@@ -627,6 +625,12 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
       ACTION(j,ovls,n);
     }
 
+  if (ovls[n].aread < INT32_MAX)
+    { fprintf(stderr,"%s: .las file overlaps don't correspond to reads in block %d of DB\n",
+                     Prog_Name,DB_PART);
+      exit (1);
+    }
+
   return (max);
 }
 
@@ -635,9 +639,8 @@ int main(int argc, char *argv[])
   char       *root, *dpwd;
   char       *las, *lpwd;
   int64       novl;
-  HITS_TRACK *track;
+  DAZZ_TRACK *track;
   int         c;
-  int         COVERAGE;
 
   //  Process arguments
 
@@ -714,19 +717,12 @@ int main(int argc, char *argv[])
         if (extra == 4*sizeof(int))
           { fread(&GOOD_QV,sizeof(int),1,afile);
             fread(&BAD_QV,sizeof(int),1,afile);
-            fread(&COVERAGE,sizeof(int),1,afile);
+            fread(&HGAP_MIN,sizeof(int),1,afile);
             fread(&HGAP_MIN,sizeof(int),1,afile);
           }
-        else if (extra == 3*sizeof(int))
+        else if (extra == 2*sizeof(int) || extra == 3*sizeof(int))
           { fread(&GOOD_QV,sizeof(int),1,afile);
             fread(&BAD_QV,sizeof(int),1,afile);
-            fread(&COVERAGE,sizeof(int),1,afile);
-            HGAP_MIN = 0;
-          }
-        else if (extra == 2*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            COVERAGE = -1;
             HGAP_MIN = 0;
           }
         else
@@ -802,19 +798,19 @@ int main(int argc, char *argv[])
                 if (dbfile == NULL)
                   exit (1);
                 if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 for (i = 0; i < nfiles; i++)
                   if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_ERROR
+                    SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 for (i = 1; i <= part; i++)
                   if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_ERROR
+                    SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 fclose(dbfile);
                 DB_PART = part;
                 *p = '\0';
@@ -849,7 +845,7 @@ int main(int argc, char *argv[])
 
       //  Open overlap file
 
-      lpwd = PathTo(argv[2]);
+      lpwd = PathTo(argv[c]);
       if (DB_PART)
         input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
       else

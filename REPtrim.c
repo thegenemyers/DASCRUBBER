@@ -30,10 +30,9 @@ static char *Usage = "<source:db> ...";
 #define ADSUF 4   //  Gap is due to adaptemer, trim suffix interval to right
 
 
-
 //  Global Variables (must exist across the processing of each pile)
 
-static HITS_DB _DB, *DB  = &_DB;   //  Data base
+static DAZZ_DB _DB, *DB  = &_DB;   //  Data base
 
 static int64  *TRIM_IDX;   //  trim track index
 static int    *TRIM;       //  trim track values
@@ -57,7 +56,7 @@ int main(int argc, char *argv[])
       char       *root;
       int         i, a, tb, te;
       int         alen;
-      HITS_TRACK *track;
+      DAZZ_TRACK *track;
       int64       nreads, totlen;
       int64       nelim, nelimbp;
       int64       n5trm, n5trmbp;
@@ -67,7 +66,8 @@ int main(int argc, char *argv[])
       int64       nlowq, nlowqbp;
       int64       nspan, nspanbp;
       int64       nchim, nchimbp;
-      int         BAD_QV, GOOD_QV, COVERAGE, HGAP_MIN;
+      int         rlog, blog;
+      int         BAD_QV, GOOD_QV, HGAP_MIN;
 
       status = Open_DB(argv[c],DB);
       if (status < 0)
@@ -104,25 +104,17 @@ int main(int argc, char *argv[])
           if (extra == 4*sizeof(int))
             { fread(&GOOD_QV,sizeof(int),1,afile);
               fread(&BAD_QV,sizeof(int),1,afile);
-              fread(&COVERAGE,sizeof(int),1,afile);
+              fread(&HGAP_MIN,sizeof(int),1,afile);
               fread(&HGAP_MIN,sizeof(int),1,afile);
             }
-          else if (extra == 3*sizeof(int))
+          else if (extra == 3*sizeof(int) || extra == 2*sizeof(int))
             { fread(&GOOD_QV,sizeof(int),1,afile);
               fread(&BAD_QV,sizeof(int),1,afile);
-              fread(&COVERAGE,sizeof(int),1,afile);
-              HGAP_MIN = 0;
-            }
-          else if (extra == 2*sizeof(int))
-            { fread(&GOOD_QV,sizeof(int),1,afile);
-              fread(&BAD_QV,sizeof(int),1,afile);
-              COVERAGE = -1;
               HGAP_MIN = 0;
             }
           else
             { GOOD_QV  = -1;
               BAD_QV   = -1;
-              COVERAGE = -1;
               HGAP_MIN = 0;
             }
           fclose(afile);
@@ -216,10 +208,35 @@ int main(int argc, char *argv[])
         printf(" [-H%d]",HGAP_MIN);
       printf(" %s\n\n",root);
 
+      { int64 mult;
+
+        rlog = 0;
+        mult = 1;
+        while (mult <= nreads || mult <= ngaps)
+          { mult *= 10;
+            rlog += 1;
+          }
+        if (rlog <= 3)
+          rlog = 3;
+        else
+          rlog += (rlog-1)/3;
+  
+        blog = 0;
+        mult = 1;
+        while (mult <= totlen)
+          { mult *= 10;
+            blog += 1;
+          }
+        if (blog <= 3)
+          blog = 3;
+        else
+          blog += (blog-1)/3;
+      }
+
       printf("  Input:    ");
-      Print_Number((int64) nreads,7,stdout);
+      Print_Number((int64) nreads,rlog,stdout);
       printf(" (100.0%%) reads     ");
-      Print_Number(totlen,12,stdout);
+      Print_Number(totlen,blog,stdout);
       printf(" (100.0%%) bases");
       if (HGAP_MIN > 0)
         { printf(" (another ");
@@ -229,69 +246,69 @@ int main(int argc, char *argv[])
       printf("\n");
 
       printf("  Trimmed:  ");
-      Print_Number(nelim,7,stdout);
+      Print_Number(nelim,rlog,stdout);
       printf(" (%5.1f%%) reads     ",(100.*nelim)/nreads);
-      Print_Number(nelimbp,12,stdout);
+      Print_Number(nelimbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*nelimbp)/totlen);
 
       printf("  5' trim:  ");
-      Print_Number(n5trm,7,stdout);
+      Print_Number(n5trm,rlog,stdout);
       printf(" (%5.1f%%) reads     ",(100.*n5trm)/nreads);
-      Print_Number(n5trmbp,12,stdout);
+      Print_Number(n5trmbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*n5trmbp)/totlen);
 
       printf("  3' trim:  ");
-      Print_Number(n3trm,7,stdout);
+      Print_Number(n3trm,rlog,stdout);
       printf(" (%5.1f%%) reads     ",(100.*n3trm)/nreads);
-      Print_Number(n3trmbp,12,stdout);
+      Print_Number(n3trmbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*n3trmbp)/totlen);
 
       if (natrm > 0)
         { printf("  Adapter:  ");
-          Print_Number(natrm,7,stdout);
+          Print_Number(natrm,rlog,stdout);
           printf(" (%5.1f%%) reads     ",(100.*natrm)/nreads);
-          Print_Number(natrmbp,12,stdout);
+          Print_Number(natrmbp,blog,stdout);
           printf(" (%5.1f%%) bases\n",(100.*natrmbp)/totlen);
         }
 
       printf("\n");
 
       printf("  Gaps:     ");
-      Print_Number(ngaps,7,stdout);
+      Print_Number(ngaps,rlog,stdout);
       printf(" (%5.1f%%) gaps      ",(100.*(ngaps))/nreads);
-      Print_Number(ngapsbp,12,stdout);
+      Print_Number(ngapsbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(ngapsbp))/totlen);
 
       printf("    Low QV: ");
-      Print_Number(nlowq,7,stdout);
+      Print_Number(nlowq,rlog,stdout);
       printf(" (%5.1f%%) gaps      ",(100.*(nlowq))/nreads);
-      Print_Number(nlowqbp,12,stdout);
+      Print_Number(nlowqbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(nlowqbp))/totlen);
 
       printf("    Span'd: ");
-      Print_Number(nspan,7,stdout);
+      Print_Number(nspan,rlog,stdout);
       printf(" (%5.1f%%) gaps      ",(100.*(nspan))/nreads);
-      Print_Number(nspanbp,12,stdout);
+      Print_Number(nspanbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(nspanbp))/totlen);
 
       printf("    Break:  ");
-      Print_Number(nchim,7,stdout);
+      Print_Number(nchim,rlog,stdout);
       printf(" (%5.1f%%) gaps      ",(100.*(nchim))/nreads);
-      Print_Number(nchimbp,12,stdout);
+      Print_Number(nchimbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(nchimbp))/totlen);
 
       printf("\n");
 
       printf("  Clipped:  ");
-      Print_Number(n5trm+n3trm+nelim+nchim,7,stdout);
+      Print_Number(n5trm+n3trm+nelim+nchim,rlog,stdout);
       printf(" clips              ");
-      Print_Number(n5trmbp+n3trmbp+nelimbp+nchimbp,12,stdout);
+      Print_Number(n5trmbp+n3trmbp+nelimbp+nchimbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(n5trmbp+n3trmbp+nelimbp+nchimbp))/totlen);
 
       printf("  Patched:  ");
-      Print_Number(nlowq+nspan,7,stdout);
+      Print_Number(nlowq+nspan,rlog,stdout);
       printf(" patches            ");
-      Print_Number(nlowqbp+nspanbp,12,stdout);
+      Print_Number(nlowqbp+nspanbp,blog,stdout);
       printf(" (%5.1f%%) bases\n",(100.*(nlowqbp+nspanbp))/totlen);
 
       free(root);

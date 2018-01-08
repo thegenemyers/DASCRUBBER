@@ -161,6 +161,7 @@ static double Bias_Factor[10] = { .690, .690, .690, .690, .780,
 typedef struct
   { double ave_corr;
     int    trace_space;
+    int    reach;
     float  freq[4];
     int    ave_path;
     int16 *score;
@@ -196,7 +197,7 @@ static void set_table(int bit, int prefix, int score, int max, Table_Bits *parms
 
 /* Create an alignment specification record including path tip tables & values */
 
-Align_Spec *New_Align_Spec(double ave_corr, int trace_space, float *freq)
+Align_Spec *New_Align_Spec(double ave_corr, int trace_space, float *freq, int reach)
 { _Align_Spec *spec;
   Table_Bits   parms;
   double       match;
@@ -208,6 +209,7 @@ Align_Spec *New_Align_Spec(double ave_corr, int trace_space, float *freq)
 
   spec->ave_corr    = ave_corr;
   spec->trace_space = trace_space;
+  spec->reach       = reach;
   spec->freq[0]     = freq[0];
   spec->freq[1]     = freq[1];
   spec->freq[2]     = freq[2];
@@ -256,6 +258,9 @@ int Trace_Spacing(Align_Spec *espec)
 
 float *Base_Frequencies(Align_Spec *espec)
 { return (((_Align_Spec *) espec)->freq); }
+
+int Overlap_If_Possible(Align_Spec *espec)
+{ return (((_Align_Spec *) espec)->reach); }
 
 
 /****************************************************************************************\
@@ -343,6 +348,7 @@ static int forward_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
 
   int     TRACE_SPACE = spec->trace_space;
   int     PATH_AVE    = spec->ave_path;
+  int     REACH       = spec->reach;
   int16  *SCORE       = spec->score;
   int16  *TABLE       = spec->table;
 
@@ -874,7 +880,7 @@ static int forward_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
     int     a, b, k, h;
     int     d, e;
 
-    if (morem >= 0)
+    if (morem >= 0 && REACH)
       { trimx  = morea-morey;
         trimy  = morey;
         trimd  = mored;
@@ -1004,6 +1010,7 @@ static int reverse_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
 
   int     TRACE_SPACE = spec->trace_space;
   int     PATH_AVE    = spec->ave_path;
+  int     REACH       = spec->reach;
   int16  *SCORE       = spec->score;
   int16  *TABLE       = spec->table;
 
@@ -1527,7 +1534,7 @@ static int reverse_wave(_Work_Data *work, _Align_Spec *spec, Alignment *align, P
     int     a, b, k, h;
     int     d, e;
 
-    if (morem >= 0)
+    if (morem >= 0 && REACH)
       { trimx  = morea-morey;
         trimy  = morey;
         trimd  = mored;
@@ -4194,7 +4201,10 @@ static int ToA[4] = { 'a', 'c', 'g', 't' };
 
 #endif
 
-static int iter_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode)
+static char *TP_Align =
+         "Bad alignment between trace points (Compute_Trace), source DB likely incorrect";
+
+static int iter_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode, int dmax)
 { int  **PVF = wave->PVF; 
   int  **PHF = wave->PHF;
   int    D;
@@ -4226,17 +4236,21 @@ static int iter_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode)
         hgh = 0;
       }
 
-    posl = -INT32_MAX;
-    posh =  INT32_MAX;
+    posl = -dmax;
+    posh =  dmax;
     if (wave->Aabs == wave->Babs)
       { if (B == A)
-          { EPRINTF(EPLACE,"Error: self comparison starts on diagonal 0 (Compute_Trace)\n");
+          { EPRINTF(EPLACE,"%s: self comparison starts on diagonal 0 (Compute_Trace)\n",Prog_Name);
             EXIT(-1);
           }
         else if (B < A)
-          posl = (B-A)+1;
+          { if ((B-A)+1 > posl)
+              posl = (B-A)+1;
+          }
         else
-          posh = (B-A)-1;
+          { if ((B-A)-1 < posh)
+              posh = (B-A)-1;
+          }
       }
 
     F1 = PVF[-2];
@@ -4253,6 +4267,11 @@ static int iter_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode)
       { int   k, i, j;
         int   am, ac, ap;
         char *a;
+
+        if (D > dmax)
+          { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Align);
+            EXIT(-1);
+          }
 
         F2 = F1;
         F1 = F0;
@@ -4523,7 +4542,7 @@ static int iter_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode)
   return (D + abs(del));
 }
 
-static int middle_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode)
+static int middle_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode, int dmax)
 { int  **PVF = wave->PVF; 
   int  **PHF = wave->PHF;
   int    D;
@@ -4555,17 +4574,21 @@ static int middle_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode
         hgh = 0;
       }
 
-    posl = -INT32_MAX;
-    posh =  INT32_MAX;
+    posl = -dmax;
+    posh =  dmax;
     if (wave->Aabs == wave->Babs)
       { if (B == A)
-          { EPRINTF(EPLACE,"Error: self comparison starts on diagonal 0 (Compute_Trace)\n");
+          { EPRINTF(EPLACE,"%s: self comparison starts on diagonal 0 (Compute_Trace)\n",Prog_Name);
             EXIT(1);
           }
         else if (B < A)
-          posl = (B-A)+1;
+          { if ((B-A)+1 > posl)
+              posl = (B-A)+1;
+          }
         else
-          posh = (B-A)-1;
+          { if ((B-A)-1 < posh)
+              posh = (B-A)-1;
+          }
       }
 
     F1 = PVF[-2];
@@ -4582,6 +4605,11 @@ static int middle_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode
       { int   k, i, j;
         int   am, ac, ap;
         char *a;
+
+        if (D > dmax)
+          { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Align);
+            EXIT(-1);
+          }
 
         F2 = F1;
         F1 = F0;
@@ -4795,14 +4823,20 @@ static int middle_np(char *A, int M, char *B, int N, Trace_Waves *wave, int mode
 *                                                                                        *
 \****************************************************************************************/
 
+static char *TP_Error = "Trace point out of bounds (Compute_Trace), source DB likely incorrect";
+
 int Compute_Trace_ALL(Alignment *align, Work_Data *ework)
 { _Work_Data *work = (_Work_Data *) ework;
   Trace_Waves wave;
 
   Path *path;
   char *aseq, *bseq;
+  int   alen, blen;
   int   M, N, D;
+  int   dmax;
 
+  alen   = align->alen;
+  blen   = align->blen;
   path = align->path;
   aseq = align->aseq;
   bseq = align->bseq;
@@ -4812,7 +4846,6 @@ int Compute_Trace_ALL(Alignment *align, Work_Data *ework)
   
   { int64 s;
     int   d;
-    int   dmax;
     int   **PVF, **PHF;
 
     if (M < N)
@@ -4851,7 +4884,11 @@ int Compute_Trace_ALL(Alignment *align, Work_Data *ework)
   wave.Aabs = aseq;
   wave.Babs = bseq;
 
-  D = iter_np(aseq+path->abpos,M,bseq+path->bbpos,N,&wave,GREEDIEST);
+  if (path->aepos > alen || path->bepos > blen)
+    { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+      EXIT(1);
+    }
+  D = iter_np(aseq+path->abpos,M,bseq+path->bbpos,N,&wave,GREEDIEST,dmax);
   if (D < 0)
     EXIT(1);
   path->diffs = D;
@@ -4867,12 +4904,15 @@ int Compute_Trace_PTS(Alignment *align, Work_Data *ework, int trace_spacing, int
 
   Path   *path;
   char   *aseq, *bseq;
+  int     alen, blen;
   uint16 *points;
   int     tlen;
   int     ab, bb;
   int     ae, be;
-  int     diffs;
+  int     diffs, dmax;
 
+  alen   = align->alen;
+  blen   = align->blen;
   path   = align->path;
   aseq   = align->aseq;
   bseq   = align->bseq;
@@ -4882,7 +4922,7 @@ int Compute_Trace_PTS(Alignment *align, Work_Data *ework, int trace_spacing, int
   { int64 s;
     int   d;
     int   M, N;
-    int   dmax, nmax;
+    int   nmax;
     int   **PVF, **PHF;
 
     M = path->aepos-path->abpos;
@@ -4938,7 +4978,11 @@ int Compute_Trace_PTS(Alignment *align, Work_Data *ework, int trace_spacing, int
     for (i = 1; i < tlen; i += 2)
       { ae = ae + trace_spacing;
         be = bb + points[i];
-        d  = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode);
+        if (ae > alen || be > blen)
+          { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+            EXIT(1);
+          }
+        d  = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode,dmax);
         if (d < 0)
           EXIT(1);
         diffs += d;
@@ -4947,7 +4991,11 @@ int Compute_Trace_PTS(Alignment *align, Work_Data *ework, int trace_spacing, int
       }
     ae = path->aepos;
     be = path->bepos;
-    d  = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode);
+    if (ae > alen || be > blen)
+      { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+        EXIT(1);
+      }
+    d  = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode,dmax);
     if (d < 0)
       EXIT(1);
     diffs += d;
@@ -4966,12 +5014,15 @@ int Compute_Trace_MID(Alignment *align, Work_Data *ework, int trace_spacing, int
 
   Path   *path;
   char   *aseq, *bseq;
+  int     alen, blen;
   uint16 *points;
   int     tlen;
   int     ab, bb;
   int     ae, be;
-  int     diffs;
+  int     diffs, dmax;
 
+  alen   = align->alen;
+  blen   = align->blen;
   path   = align->path;
   aseq   = align->aseq;
   bseq   = align->bseq;
@@ -4981,7 +5032,7 @@ int Compute_Trace_MID(Alignment *align, Work_Data *ework, int trace_spacing, int
   { int64 s;
     int   d;
     int   M, N;
-    int   dmax, nmax;
+    int   nmax;
     int   **PVF, **PHF;
 
     M = path->aepos-path->abpos;
@@ -5039,11 +5090,15 @@ int Compute_Trace_MID(Alignment *align, Work_Data *ework, int trace_spacing, int
     for (i = 1; i < tlen; i += 2) 
       { ae = ae + trace_spacing;
         be = bb + points[i];
-        if (middle_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode))
+        if (ae > alen || be > blen)
+          { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+            EXIT(1);
+          }
+        if (middle_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode,dmax))
           EXIT(1);
         af = wave.mida;
         bf = wave.midb;
-        d  = iter_np(aseq+as,af-as,bseq+bs,bf-bs,&wave,mode);
+        d  = iter_np(aseq+as,af-as,bseq+bs,bf-bs,&wave,mode,dmax);
         if (d < 0)
           EXIT(1);
         diffs += d;
@@ -5056,18 +5111,22 @@ int Compute_Trace_MID(Alignment *align, Work_Data *ework, int trace_spacing, int
     ae = path->aepos;
     be = path->bepos;
 
-    if (middle_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode))
+    if (ae > alen || be > blen)
+      { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+        EXIT(1);
+      }
+    if (middle_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode,dmax))
       EXIT(1);
     af = wave.mida;
     bf = wave.midb;
-    d  = iter_np(aseq+as,af-as,bseq+bs,bf-bs,&wave,mode);
+    d  = iter_np(aseq+as,af-as,bseq+bs,bf-bs,&wave,mode,dmax);
     if (d < 0)
       EXIT(1);
     diffs += d;
     as = af;
     bs = bf;
     
-    d += iter_np(aseq+af,ae-as,bseq+bf,be-bs,&wave,mode);
+    d += iter_np(aseq+af,ae-as,bseq+bf,be-bs,&wave,mode,dmax);
     if (d < 0)
       EXIT(1);
     diffs += d;
@@ -5086,12 +5145,15 @@ int Compute_Trace_IRR(Alignment *align, Work_Data *ework, int mode)
 
   Path   *path;
   char   *aseq, *bseq;
+  int     alen, blen;
   uint16 *points;
   int     tlen;
   int     ab, bb;
   int     ae, be;
-  int     diffs;
+  int     diffs, dmax;
 
+  alen   = align->alen;
+  blen   = align->blen;
   path   = align->path;
   aseq   = align->aseq;
   bseq   = align->bseq;
@@ -5101,7 +5163,7 @@ int Compute_Trace_IRR(Alignment *align, Work_Data *ework, int mode)
   { int64 s;
     int   d;
     int   M, N;
-    int   mmax, nmax, dmax;
+    int   mmax, nmax;
     int   **PVF, **PHF;
 
     M = path->aepos-path->abpos;
@@ -5160,7 +5222,11 @@ int Compute_Trace_IRR(Alignment *align, Work_Data *ework, int mode)
     for (i = 0; i < tlen; i += 2)
       { ae = ab + points[i];
         be = bb + points[i+1];
-        d = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode);
+        if (ae > alen || be > blen)
+          { EPRINTF(EPLACE,"%s: %s\n",Prog_Name,TP_Error);
+            EXIT(1);
+          }
+        d = iter_np(aseq+ab,ae-ab,bseq+bb,be-bb,&wave,mode,dmax);
         if (d < 0)
           EXIT(1);
         diffs += d;

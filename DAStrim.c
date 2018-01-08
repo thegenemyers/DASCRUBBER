@@ -25,20 +25,24 @@
 #define PATHSEP "/"
 #endif
 
-#undef   DEBUG_HQ_BLOCKS     //  Various DEBUG flags (normally all off)
+#undef    DEBUG_HQ_BLOCKS     //  Various DEBUG flags (normally all off)
 #undef     SHOW_EVENTS
-#undef   DEBUG_HOLE_FINDER
-#undef   DEBUG_GAP_STATUS
+#undef    DEBUG_HOLE_FINDER
+#undef    DEBUG_GAP_STATUS
 #undef     SHOW_PAIRS
-#undef   DEBUG_SUMMARY
+#undef    DEBUG_PATCHING
+#undef    DEBUG_SUMMARY
 
-#undef   ANNOTATE   //  Output annotation tracks for DaViewer
+#undef    DEBUG_CLASS
+
+#define  ANNOTATE   //  Output annotation tracks for DaViewer
 
 
 //  Command format and global parameter variables
 
 static char *Usage = " [-v] -g<int> -b<int> <source:db> <overlaps:las> ...";
 
+static int     COVERAGE;   //  estimated coverage
 static int     BAD_QV;     //  qv >= and you are "bad"
 static int     GOOD_QV;    //  qv <= and you are "good"
 static int     HGAP_MIN;   //  less than this length do not process for HGAP
@@ -66,6 +70,8 @@ static int AdSuf = ADSUF;
 #define  COVER_LEN     400  //  An overlap covers a point if it extends COVER_LEN to either side.
 #define  ANCHOR_MATCH  .25  //  Delta in trace interval at both ends of patch must be < this %.
 
+#define  MIN_OVERLAP   900  //  Was COVER_LEN, too small?
+
 //  Wall Constants
 
 #define MIN_PNT 5        //  Minimum # of events in a wall
@@ -79,7 +85,7 @@ static int AdSuf = ADSUF;
 
 static int     TRACE_SPACING;  //  Trace spacing (from .las file)
 
-static HITS_DB _DB, *DB  = &_DB;   //  Data base
+static DAZZ_DB _DB, *DB  = &_DB;   //  Data base
 static int     DB_FIRST;           //  First read of DB to process
 static int     DB_LAST;            //  Last read of DB to process (+1)
 static int     DB_PART;            //  0 if all, otherwise block #
@@ -707,9 +713,9 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                   printf("  Dev %5d-%3d-%5d -> %5d",queue[lflank].pos,nend,queue[first].pos,dpos);
 #endif
 
-                //  Second, look for the rightmost RGT-(LFT-)wall that overlaps the left (right)
+                //  Second, look for the leftmost RGT-(LFT-)wall that overlaps the left (right)
                 //    flank, i.e. queue[lflank,first].pos (queue[last,rflank].pos), and if found
-                //    take the average position of the wall.
+                //    take the average position of the flank position within the wall.
 
                   for (d = dnum-1; d >= 0; d--)
                     if (dwall[d].beg <= queue[first].pos)
@@ -728,7 +734,7 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                           }
                       dpos = sum/n;
 #ifdef DEBUG_HOLE_FINDER
-                      printf(" [%5d,%5d] -> %4d\n",dwall[d].beg,dwall[d].end,dpos);
+                      printf(" Map [%5d,%5d] -> %4d\n",dwall[d].beg,dwall[d].end,dpos);
 #endif
                       dcov = dwall[d].cov + dwall[d].cnt;
 		      d -= 1;
@@ -779,7 +785,7 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                           }
                       apos = sum/n;
 #ifdef DEBUG_HOLE_FINDER
-                      printf(" [%5d,%5d] -> %4d\n",awall[a].beg,awall[a].end,apos);
+                      printf(" Map [%5d,%5d] -> %4d\n",awall[a].beg,awall[a].end,apos);
 #endif
                       acov = awall[a].cov + awall[a].cnt;
                       a += 1;
@@ -804,14 +810,14 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                               { dcov = dwall[d].cov + dwall[d].cnt;
                                 dpos = dwall[d--].beg;
 #ifdef DEBUG_HOLE_FINDER
-                                printf("  <- %d\n",dpos);
+                                printf("  Push <- %d\n",dpos);
 #endif
                               }
                             else
                               { acov = awall[a].cov + awall[a].cnt;
                                 apos = awall[a++].end;
 #ifdef DEBUG_HOLE_FINDER
-                                printf("  -> %d\n",apos);
+                                printf("  Push -> %d\n",apos);
 #endif
                               }
                           }
@@ -819,7 +825,7 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                           { dcov = dwall[d].cov + dwall[d].cnt;
                             dpos = dwall[d--].beg;
 #ifdef DEBUG_HOLE_FINDER
-                            printf("  <- %d\n",dpos);
+                            printf("  Push <- %d\n",dpos);
 #endif
                           }
                       else
@@ -827,7 +833,7 @@ static int FIND_HOLES(int aread, Overlap *ovls, int novl, Interval *block, int n
                           { acov = awall[a].cov + awall[a].cnt;
                             apos = awall[a++].end;
 #ifdef DEBUG_HOLE_FINDER
-                            printf("  -> %d\n",apos);
+                            printf("  Push -> %d\n",apos);
 #endif
                           }
                         else
@@ -1022,6 +1028,9 @@ typedef struct
   { int lidx;    //  left LA index
     int ridx;    //  right LA index
     int delta;   //  Difference between A-gap and B-gap
+    int soft;    //  0 (soft) = pair is not close to gap border or adjacent gap border on both sides
+                 //  1 (anciliary) = pair is not close to gap border but is to adjacent gap border
+                 //  2 (hard) = pair is close to gap border on both sides
   } Spanner;
 
 typedef struct
@@ -1174,14 +1183,103 @@ static Patch *compute_patch(int lft, int rgt, Overlap *lov, Overlap *rov)
   return (&ans);
 }
 
+//  Examine the spanning pairs for a gap.  Group those with sufficient density
+//    i.e. with 20 + 10% of the last one.  If test == 1, keep groups that have at
+//    least 4 members, and are either 60% hard or at least 8 hard pairs, but trim
+//    away any extremal non-hard pairs.  If test == 0, keep the largest group that has
+//    at least 4 members, and is either 60% not soft or at least 8 non-soft pairs,
+//    but trim awya ny extermal soft pairs.  If "move" is non-zero then compress gsort
+//    accordingly, return the size of gsort after trimming in all instances.
+
+static int analyze_gap_pairs(int gsize, Spanner *gsort, Overlap *ovls,
+                             int gcnt, int scnt, int test, int move)
+{ int j, l, c, x, w;
+  int bord, soft, keeper;
+  int ncnt, biggest;
+
+  (void) ovls;
+
+  biggest = 0;
+  ncnt = 0;
+#ifdef SHOW_PAIRS
+  if (move)
+    printf("  Gsort: %d\n",gsize);
+#endif
+  c = gsize - gsort[0].delta;
+  w = 0;
+  for (j = 0; j <= gcnt; j++)
+    { l = c;
+      if (j >= gcnt)
+        bord = 1;
+      else
+        { c = gsize - gsort[j].delta;
+          if (l < 0)
+            bord = (l-c >= 20-.1*c);
+          else
+            bord = (l-c >= 20+.1*l);
+        }
+      if (bord)
+        { soft = 0;
+          for (x = w; x < j; x++)
+            soft += (gsort[x].soft <= test);
+          keeper = (j-w >= 4 && (soft < .4*(j-w) || (j-w)-soft >= 8));
+          if (test == 0)
+            { if (keeper && j-w > biggest)
+                { biggest = j-w;
+                  ncnt = 0;
+                }
+              else
+                keeper = 0;
+            }
+#ifdef SHOW_PAIRS
+          if (move)
+            { printf("----\n");
+              for (x = w; x < j; x++)
+                { printf("  %3d: %5d %5d",x,gsort[x].delta,gsize-gsort[x].delta);
+                  printf(" %5d",ovls[gsort[x].lidx].bread);
+                  if (gsort[x].soft == 0)
+                    printf(" @");
+                  else if (gsort[x].soft == 1)
+                    printf(" #");
+                  else
+                    printf("  ");
+                  if (!keeper)
+                    printf(" X");
+                  printf("\n");
+                }
+            }
+#endif
+          if (keeper)
+            { for (x = w; x < j; x++)
+                if (gsort[x].soft > test)
+                  break;
+              for (w = j; gsort[w-1].soft <= test; w--)
+                ;
+              if (move)
+                while (x < w)
+                  gsort[ncnt++] = gsort[x++];
+              else
+                ncnt += w-x;
+            }
+          w = j;
+        }
+    }
+  if (move)
+    for (x = gcnt; x < gcnt+scnt; x++)
+      gsort[ncnt++] = gsort[x];
+  else
+    ncnt += scnt;
+
+  return (ncnt);
+}
+
 //  Categorize each gap and if appropriate return the best patch for each
 
 static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rblock,
                       int *p_lft, int *p_rgt)
 { static int  nmax = 0;
 
-  static Spanner *gsort = NULL;       //  A-B delta and idx-pair for all B-reads spanning a gap
-  static int     *asort = NULL;       //  A-B delta for all B-reads spanning a gap
+  static Spanner *gsort = NULL;   //  A-B delta and idx-pair for all B-reads spanning a gap
 
   static int      ANCHOR_THRESH;
 
@@ -1197,8 +1295,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
     { if (novl > nmax)
         { nmax = 1.2*novl + 500;
           gsort = (Spanner *) Realloc(gsort,nmax*sizeof(Spanner),"Allocating gap vector");
-          asort = (int *) Realloc(asort,nmax*sizeof(int),"Allocating adaptemer position vector");
-          if (gsort == NULL || asort == NULL)
+          if (gsort == NULL)
             exit (1);
           ANCHOR_THRESH = ANCHOR_MATCH * TRACE_SPACING;
         }
@@ -1257,30 +1354,33 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
 #endif
     }
 
-  { int bread, bcomp, blen;
+  { int bread, bcomp, blen, blast;
     int ab, ae;
+    int lstack[10], ltop;
+    int rstack[10], rtop;
     int lcnt, rcnt, scnt, gcnt, acnt;
-    int lidx, ridx, sidx, cidx;
+    int lidx, ridx, sidx, Lidx, Ridx;
     int k;
 
     //  Find LA pairs or LAs spanning the gap flank [lcv,rcv]
 
+    bread = -1;
     lcnt = rcnt = scnt = gcnt = acnt = 0;
     for (j = 0; j < novl; j = k)
-      { bread = ovls[j].bread;
+      { blast = bread;
+        bread = ovls[j].bread;
         blen  = DB->reads[bread].rlen;
         bcomp = COMP(ovls[j].flags);
-        if (bcomp)
-          cidx = j;
+        Lidx  = lidx;
+        Ridx  = ridx;
 
+        ltop = rtop = 0;
         lidx = ridx = sidx = -1;    //  For all LA's with same b-read
         for (k = j; k < novl; k++)
           { if (ovls[k].bread != bread)
               break;
             if (COMP(ovls[k].flags) != (uint32) bcomp)   //  Note when b switches orientation
-              { cidx  = k;
-                bcomp = COMP(ovls[k].flags);
-              }
+              break;
             ab = ovls[k].path.abpos;
             ae = ovls[k].path.aepos;
 
@@ -1293,47 +1393,82 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
 #endif
 
             //  Is LA a spanner, left-partner, or right partner
+            //    A partner is hard if end=point is within COVER_LEN of the gap boundary
+            //    Record rigthmost/leftmost left/right hard partners (if any)
 
             if (ab <= lcv && ae >= rcv)
               { sidx = k;
                 lidx = ridx = -1;
+                ltop = rtop = 0;
                 continue;
               }
 
+            if (sidx >= 0)
+              continue;
+            
+            if (ae >= rcv && ab > lft)
+              { if (rtop < 10)
+                  rstack[rtop++] = k;
 #ifdef SHOW_PAIRS
-           if (ae >= rcv && ab <= rcv && ab - ovls[k].path.bbpos <= lft - COVER_LEN)
-             printf("r");
-           else
-             printf(" ");
-           if (ab <= lcv && ae >= lcv && ae + (blen-ovls[j].path.bepos) >= rgt + COVER_LEN)
-             printf("l");
-           else
-             printf(" ");
+                printf("r");
 #endif
+                if (ab <= rcv && ridx < 0)
+                  { ridx = k;
+#ifdef SHOW_PAIRS
+                    printf("+");
+#endif
+                  }
+              }
 
-            if (ae >= rcv && ab <= rcv && ab - ovls[k].path.bbpos <= lft - COVER_LEN)
-              ridx = k;
-            if (ab <= lcv && ae >= lcv && ae + (blen-ovls[j].path.bepos) >= rgt + COVER_LEN)
-              lidx = k;
+            if (ab <= lcv && ae < rgt)
+              { if (ltop < 10)
+                  lstack[ltop++] = k;
+#ifdef SHOW_PAIRS
+                printf("l");
+#endif
+                if (ae >= lcv)
+                  { lidx = k;
+#ifdef SHOW_PAIRS
+                    printf("+");
+#endif
+                  }
+	      }
           }
-        if (! bcomp)
-          cidx = k;
 
+        //  Check for a hard contra pair and if found add
+        //  Then check for a spanner and if so then add to gsort list.
+        //  Then check for a spanning pair: use hard pair if available, otherwise
+        //    use tightest pair and term it anciliary if endpoints are within an adjacent
+        //    gap boundary, or soft otherwise.
+        //  Finally, if left or right hard (but unpaired) then record as a conflict if
+        //    projection extends MIN_OVERLAP past the other side.
+
+        if (blast == bread)
+          { if (ridx < 0)
+              { if (lidx >= 0 && Ridx >= 0 && Lidx < 0)
+                  { acnt += 1;
+                    if (Ridx >= 0 && ovls[Ridx].path.abpos - ovls[Ridx].path.bbpos
+                                             <= lft - MIN_OVERLAP)
+                      rcnt -= 1;
 #ifdef SHOW_PAIRS
-        printf(" =");
-        if (sidx >= 0)
-          printf(" S");
-        if (lidx >= 0)
-          printf(" L");
-        if (ridx >= 0)
-          printf(" R");
-        if (0 <= lidx && lidx < ridx && (ridx < cidx || lidx >= cidx))
-          printf(" G");
-        if ((0<=ridx && ridx<cidx && cidx<=lidx) || (0<=lidx && lidx<cidx && cidx<=ridx))
-          printf(" A");
+                    printf(" = A");
 #endif
-
-        //  Add spanning LA or spanning pair to gsort list.  Add contra pairs to asort list.
+                    continue;
+                  }
+              }
+            else
+              { if (lidx < 0 && Ridx < 0 && Lidx >= 0)
+                  { acnt += 1;
+                    if (Lidx >= 0 && ovls[Lidx].path.aepos + (blen-ovls[Lidx].path.bepos)
+                                            >= rgt + MIN_OVERLAP)
+                      lcnt -= 1;
+#ifdef SHOW_PAIRS
+                    printf(" = A");
+#endif
+                    continue;
+                  }
+              }
+          }
 
         if (sidx >= 0)
           { gsort[gcnt].delta = DB->maxlen;
@@ -1341,22 +1476,80 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
             gsort[gcnt].ridx  = sidx;
             gcnt += 1;
             scnt += 1;
+#ifdef SHOW_PAIRS
+            printf(" = S");
+#endif
+            continue;
           }
-        else
-          { if (lidx >= 0)
-              lcnt += 1;
-            if (ridx >= 0)
-              rcnt += 1;
-            if (0 <= lidx && lidx < ridx && (ridx < cidx || cidx <= lidx))
-              { gsort[gcnt].delta = (ovls[ridx].path.abpos - ovls[lidx].path.aepos)
-                                  - (ovls[ridx].path.bbpos - ovls[lidx].path.bepos);
-                gsort[gcnt].lidx  = lidx;
-                gsort[gcnt].ridx  = ridx;
-                gcnt += 1;
+
+        if (ltop > 0 && rtop > 0)
+          { int lok, rok, x;
+
+            if (lidx < 0 || ridx < 0)
+              { int dif, bst;
+                int x, y;
+
+                bst = 0x7fffffff;
+                for (ltop--; ltop >= 0; ltop--)
+                  { x = lstack[ltop];
+                    for (rtop--; rtop >= 0; rtop--)
+                      { y = rstack[rtop];
+                        dif = (ovls[y].path.abpos - ovls[x].path.aepos)
+                           - (ovls[y].path.bbpos - ovls[x].path.bepos);
+                        dif = abs(dif);
+                        if (dif < bst)
+                          { bst  = dif;
+                            lidx = x;
+                            ridx = y;
+                            dif = (ovls[ridx].path.abpos - ovls[lidx].path.aepos)
+                                - (ovls[ridx].path.bbpos - ovls[lidx].path.bepos);
+#ifdef SHOW_PAIRS
+                            printf(" C(%d,%d = %d)",x,y,dif);
+#endif
+                          }
+                      }
+                  }
               }
-            else if ((0<=ridx && ridx<cidx && cidx<=lidx) || (0<=lidx && lidx<cidx && cidx<=ridx))
-              asort[acnt++] = (((blen-ovls[ridx].path.bbpos) - ovls[lidx].path.bepos)
-                            + (ovls[lidx].path.aepos + ovls[ridx].path.abpos))/2;
+
+            lok = 2;
+            if (ovls[lidx].path.aepos < lcv)
+              { x = ovls[lidx].path.aepos;
+                lok = (lblock > FirstB && x <= lblock->beg && x >= lblock[-1].end - COVER_LEN);
+              }
+            rok = 2;
+            if (ovls[ridx].path.abpos > rcv)
+              { x = ovls[ridx].path.abpos;
+                rok = (rblock < LastB && x >= rblock->end && x <= rblock[1].beg + COVER_LEN);
+              }
+  
+            if (lok >= 2 && rok >= 2)
+              gsort[gcnt].soft = 2;
+            else if (lok >= 1 && rok >= 1)
+              gsort[gcnt].soft = 1;
+            else
+              gsort[gcnt].soft = 0;
+            gsort[gcnt].delta = (ovls[ridx].path.abpos - ovls[lidx].path.aepos)
+                              - (ovls[ridx].path.bbpos - ovls[lidx].path.bepos);
+            gsort[gcnt].lidx  = lidx;
+            gsort[gcnt].ridx  = ridx;
+            gcnt += 1;
+#ifdef SHOW_PAIRS
+            printf(" = G%d",gsort[gcnt-1].delta);
+#endif
+            continue;
+          }
+
+        if (ridx >= 0 && ovls[ridx].path.abpos - ovls[ridx].path.bbpos <= lft - MIN_OVERLAP)
+          { rcnt += 1;
+#ifdef SHOW_PAIRS
+            printf(" = R");
+#endif
+          }
+        if (lidx >= 0 && ovls[lidx].path.aepos + (blen-ovls[lidx].path.bepos) >= rgt + MIN_OVERLAP)
+          { lcnt += 1;
+#ifdef SHOW_PAIRS
+            printf(" = L");
+#endif
           }
       }
 
@@ -1364,79 +1557,67 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
     printf("\n");
 #endif
 
-#ifdef DEBUG_GAP_STATUS
-    printf("    lcnt = %d  scnt = %d(%d)  rcnt = %d acnt = %d\n",lcnt,gcnt-scnt,scnt,rcnt,acnt);
-#endif
-
-    { int64 med, dev;
-      int   std, avg;
-      int   low, hgh;
+    { int ccnt, ocnt;
 
       if (lcnt < rcnt)
-        rcnt = lcnt;
+        ccnt = lcnt;
+      else
+        ccnt = rcnt;
+
+      //  Analyze pair list gsort: if standard analysis (only hard pairs count) does not yield
+      //    a span, then consider anciliary pair spanners (rarely makes a difference but does
+      //    save a few.
+  
+      qsort(gsort,gcnt,sizeof(Spanner),GSORT);
+      gcnt -= scnt;
+
+      ocnt = gcnt;
+      gcnt = analyze_gap_pairs(rgt-lft,gsort,ovls,gcnt,scnt,1,0);
+      if (scnt < 4 && gcnt < 10 && gcnt < ccnt)
+        {
+#ifdef SHOW_PAIRS
+          printf("  SPECIAL\n");
+#endif
+          gcnt = analyze_gap_pairs(rgt-lft,gsort,ovls,ocnt,scnt,0,1);
+#ifdef SHOW_PAIRS
+          if (gcnt >= 10 || gcnt >= ccnt)
+            printf("  SWITCH\n");
+#endif
+        }
+      else
+        analyze_gap_pairs(rgt-lft,gsort,ovls,ocnt,scnt,1,1);
+
+#ifdef DEBUG_GAP_STATUS
+      printf("    lcnt = %d  gcnt = %d  scnt = %d  rcnt = %d acnt = %d\n",
+             lcnt,gcnt-scnt,scnt,rcnt,acnt);
+#endif
 
       //  Lots of contra pairs and less spanning support, call it an adaptamer gap.
   
-      if (acnt >= .4*rcnt && gcnt < .3*acnt) 
+      if (acnt >= .3*ccnt && gcnt < acnt) 
         {
 #ifdef DEBUG_GAP_STATUS
-          qsort(asort,acnt,sizeof(int),ASORT);
-          med = asort[acnt/2];
-          low = acnt*.25;
-          hgh = acnt*.75;
-          dev = 0;
-          for (j = low; j <= hgh; j++)
-            dev += (asort[j]-med)*(asort[j]-med);
-          std = sqrt((1.*dev)/acnt);
-          if (std > 200)
-            printf("  UNCERTAIN, std. dev. large\n");
           printf("    ADAPT %3d\n",std);
 #endif
           return (ADAPT);
         }
 
-      //  Examine the spanning pairs for the gap and compute average and deviation
-      //     of gap deltas for second and third quartile
-  
-      qsort(gsort,gcnt,sizeof(Spanner),GSORT);
-      gcnt -= scnt;
+      //  If there is insufficient evidence for a span, then split.
 
-      if (gcnt >= 4)
-        { med = gsort[gcnt/2].delta;
-          low = gcnt*.25;
-          hgh = gcnt*.75;
-          dev = 0;
-          avg = 0;
-          for (j = low; j <= hgh; j++)
-            { dev += (gsort[j].delta-med)*(gsort[j].delta-med);
-              avg += gsort[j].delta;
-            }
-          std = sqrt((1.*dev)/gcnt);
-          avg = avg/((hgh-low)+1);
-          low = avg-4*std;
-          hgh = avg+4*std;
-        }
-      else
-        std = 0;
-
-      //  If the pairing gap deviation is too large or there are too few pairs or
-      //    most potential partners are not paired, then be safe and split it.
-
-      gcnt += scnt;
-      if (std >= 150 || gcnt < 10 || (gcnt < .4*rcnt && gcnt < 20))
+      if (scnt < 4 && gcnt < 10 && gcnt <= ccnt)
         {
 #ifdef DEBUG_GAP_STATUS
-          if (rcnt >= 20)
+          if (ccnt >= 20)
             printf("    STRONG SPLIT\n");
           else
             printf("    WEAK SPLIT\n");
           if (gcnt >= 10)
-            printf("  UNCERTAIN %5.1f %5d %3d\n",(scnt+gcnt)/(1.*rcnt),rgt-lft,gcnt);
+            printf("  UNCERTAIN %5.1f %5d %3d\n",gcnt/(1.*ccnt),rgt-lft,gcnt);
 #endif
           return (SPLIT);
         }
 
-      //  Otherwise consider the gap linkable and try to find a viable patch, declaring a split
+      //  Otherwise consider the gap spannable and try to find a viable patch, declaring a split
       //    iff all patch attemtps fail
   
       else
@@ -1506,7 +1687,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
             { lidx = gsort[j].lidx;
               ridx = gsort[j].ridx;
 
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
               if (lidx != ridx)
                 printf("       %5d [%5d,%5d] [%5d,%5d] %4d",
                        ovls[lidx].bread,ovls[lidx].path.abpos,ovls[lidx].path.aepos,
@@ -1520,17 +1701,17 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
 
               if (can != NULL)
                 {
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                   printf(" %d",can->end-can->beg);
 #endif
                   if (can->anc <= ANCHOR_THRESH)
                     { ncand += 1;
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                       printf("  AA %d %d(%d)",can->anc,can->bad,can->avg);
 #endif
                     }
                 }
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
               printf("\n");
 #endif
             } 
@@ -1542,7 +1723,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
             { int x, best, nlft, nrgt;
               int nanchor, ntry;
 
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
               printf("     NOT ENOUGH\n");
 #endif
 
@@ -1569,7 +1750,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
                     for (j = 0; j < gcnt; j++)
                       if (eval_lft_anchor(x,ovls+gsort[j].lidx) <= ANCHOR_THRESH)
                         nanchor += 1;
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                     printf("       %5d: %3d\n",x,nanchor);
 #endif
                     if (nanchor > best)
@@ -1577,7 +1758,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
                         nlft = x;
                       }
                   }
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
               printf("          %5d->%5d\n",lft,nlft);
 #endif
 
@@ -1597,7 +1778,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
                     for (j = 0; j < gcnt; j++)
                       if (eval_rgt_anchor(x,ovls+gsort[j].ridx) <= ANCHOR_THRESH)
                         nanchor += 1;
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                     printf("       %5d: %3d\n",x,nanchor);
 #endif
                     if (nanchor > best)
@@ -1605,7 +1786,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
                         nrgt = x;
                       }
                   }
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
               printf("          %5d->%5d\n",rgt,nrgt);
 #endif
 
@@ -1628,7 +1809,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
                 { lidx = gsort[j].lidx;
                   ridx = gsort[j].ridx;
 
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                   if (lidx != ridx)
                     printf("       %5d [%5d,%5d] [%5d,%5d] %4d",
                            ovls[lidx].bread,ovls[lidx].path.abpos,ovls[lidx].path.aepos,
@@ -1643,18 +1824,18 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
     
                       if (can != NULL)
                         {
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                           printf(" %d",can->end-can->beg);
 #endif
                           if (can->anc <= ANCHOR_THRESH)
                             { ncand += 1;
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                               printf("  AA %d %d(%d)",can->anc,can->bad,can->avg);
 #endif
                             }
                         }
                     }
-#ifdef DEBUG_GAP_STATUS
+#ifdef DEBUG_PATCHING
                   printf("\n");
 #endif
                 } 
@@ -1674,7 +1855,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
           *p_rgt = rgt;
 
 #ifdef DEBUG_GAP_STATUS
-          printf("    SPAN %3d %5d:  PATCHABLE\n",std,rgt-lft);
+          printf("    SPAN %5d:  PATCHABLE\n",rgt-lft);
 #endif
           return (SPAN);
         }
@@ -1682,17 +1863,19 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
   }
 }
 
-static int *GAP_ANALYSIS(Overlap *ovls, int novl, Interval *block, int *p_nblk)
+static int *GAP_ANALYSIS(int aread, Overlap *ovls, int novl, Interval *block, int *p_nblk)
 { static int  bmax = 0;
   static int *status = NULL;      //  Status of gaps between HQ_blocks
  
-#ifdef DEBUG_SUMMARY
+#if defined(DEBUG_SUMMARY) || defined(DEBUG_CLASS)
   static char *status_string[4] = { "LOWQ", "SPAN", "SPLIT", "ADAPT" };
 #endif
 
   int nblk;
   int i, j;
   int slft = 0, srgt = 0;
+
+  (void) aread;
 
   nblk = *p_nblk;
   if (nblk > bmax)
@@ -1733,6 +1916,11 @@ static int *GAP_ANALYSIS(Overlap *ovls, int novl, Interval *block, int *p_nblk)
   for (i = 1; i < nblk; i++)
     printf(" %s [%d,%d]",status_string[status[i]],block[i].beg,block[i].end);
 #endif
+
+#ifdef DEBUG_CLASS
+  for (i = 1; i < nblk; i++)
+    printf("AREAD %d  %s  [%d,%d]\n",aread,status_string[status[i]],block[i-1].end,block[i].beg);
+#endif
   
   *p_nblk  = nblk;
   return (status);
@@ -1759,11 +1947,7 @@ static void GAPS(int aread, Overlap *ovls, int novl)
   Interval *block;
   int      *status;
 
-#if defined(DEBUG_HQ_BLOCKS) || defined(DEBUG_HOLE_FINDER)
-  printf("\n");
-  printf("AREAD %d\n",aread);
-#endif
-#if  defined(DEBUG_GAP_STATUS) || defined(DEBUG_SUMMARY)
+#if defined(DEBUG_HQ_BLOCKS) || defined(DEBUG_HOLE_FINDER) || defined(DEBUG_GAP_STATUS) || defined(DEBUG_SUMMARY)
   printf("\n");
   printf("AREAD %d\n",aread);
 #endif
@@ -1803,7 +1987,7 @@ static void GAPS(int aread, Overlap *ovls, int novl)
   //  Determine the status of each gap between a pair of blocks
 
   if (nblk > 0)
-    status = GAP_ANALYSIS(ovls,novl,block,&nblk);
+    status = GAP_ANALYSIS(aread,ovls,novl,block,&nblk);
 
   //  No blocks? ==> nothing to do
 
@@ -2010,11 +2194,9 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
   else
     tbytes = sizeof(uint16);
 
-  if (novl <= 0)
-    return (0);
-
-  Read_Overlap(input,ovls);
-  if (trace)
+  if (Read_Overlap(input,ovls) != 0)
+    ovls[0].aread = INT32_MAX;
+  else if (trace)
     { if (ovls[0].path.tlen > pmax)
         { pmax  = 1.2*(ovls[0].path.tlen)+10000;
           paths = (uint16 *) Realloc(paths,sizeof(uint16)*pmax,"Expanding path buffer");
@@ -2088,6 +2270,12 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
       ACTION(j,ovls,n);
     }
 
+  if (ovls[n].aread < INT32_MAX)
+    { fprintf(stderr,"%s: .las file overlaps don't correspond to reads in block %d of DB\n",
+                     Prog_Name,DB_PART);
+      exit (1);
+    }
+
   return (max);
 }
 
@@ -2096,9 +2284,8 @@ int main(int argc, char *argv[])
   char       *root, *dpwd;
   char       *las, *lpwd;
   int64       novl;
-  HITS_TRACK *track;
+  DAZZ_TRACK *track;
   int         c;
-  int         COVERAGE;
 
   //  Process arguments
 
@@ -2260,19 +2447,19 @@ int main(int argc, char *argv[])
                 if (dbfile == NULL)
                   exit (1);
                 if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 for (i = 0; i < nfiles; i++)
                   if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_ERROR
+                    SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 for (i = 1; i <= part; i++)
                   if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_ERROR
+                    SYSTEM_READ_ERROR
                 if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_ERROR
+                  SYSTEM_READ_ERROR
                 fclose(dbfile);
                 DB_PART = part;
                 *p = '\0';
@@ -2321,7 +2508,7 @@ int main(int argc, char *argv[])
 
       //  Open overlap file
 
-      lpwd = PathTo(argv[2]);
+      lpwd = PathTo(argv[c]);
       if (DB_PART)
         input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
       else

@@ -70,8 +70,8 @@ static int     TBYTES;         //  Bytes per trace segment (from .las file)
 static int     SMALL;          //  Trace points can fit in a byte
 static int     MIN_LEN;        //  Minimum piece length
 
-static HITS_DB _ADB, *ADB = &_ADB;    //  A-read database
-static HITS_DB _BDB, *BDB = &_BDB;    //  B-read database
+static DAZZ_DB _ADB, *ADB = &_ADB;    //  A-read database
+static DAZZ_DB _BDB, *BDB = &_BDB;    //  B-read database
 
 static int ADB_ofirst, ADB_olast;
 static int BDB_ofirst, BDB_olast;
@@ -536,7 +536,7 @@ static void EXTENDER(int aread, Overlap *ovls, int novl)
     return;
 
   if (work == NULL)
-    { spec = New_Align_Spec(.70,100,ADB->freq);
+    { spec = New_Align_Spec(.70,100,ADB->freq,1);
       work = New_Work_Data();
       ralign->path = &rpath;
       falign->path = &fpath;
@@ -897,11 +897,9 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
       SMALL  = 0;
     }
 
-  if (novl <= 0)
-    return (0);
-
-  Read_Overlap(input,ovls);
-  if (trace)
+  if (Read_Overlap(input,ovls) != 0)
+    ovls[0].aread = INT32_MAX;
+  else if (trace)
     { if (ovls[0].path.tlen > pmax)
         { pmax = 1.2*(ovls[0].path.tlen)+10000;
           paths = (uint16 *) Realloc(paths,sizeof(uint16)*pmax,"Expanding path buffer");
@@ -971,12 +969,18 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
         ACTION(j,ovls,n);
     }
 
+  if (ovls[n].aread < INT32_MAX)
+    { fprintf(stderr,"%s: .las file overlaps don't correspond to reads in block %d of DB\n",
+                     Prog_Name,ADB->part);
+      exit (1);
+    }
+
   return (max);
 }
 
 
 int main(int argc, char *argv[])
-{ HITS_TRACK *map1, *map2;
+{ DAZZ_TRACK *map1, *map2;
 
   //  Process arguments
 
@@ -1046,7 +1050,6 @@ int main(int argc, char *argv[])
           exit (1);
         }
       Trim_DB(BDB);
-
 
       Read_All_Sequences(BDB,0);
     }

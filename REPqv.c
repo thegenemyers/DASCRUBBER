@@ -25,7 +25,7 @@ static char *Usage = "<source:db> ...";
 #define  MAXQV   50     //  Max QV score is 50
 #define  MAXQV1  51
 
-static HITS_DB _DB, *DB  = &_DB;   //  Data base
+static DAZZ_DB _DB, *DB  = &_DB;   //  Data base
 
 static int64  *QV_IDX;     //  qual track index
 static uint8  *QV;         //  qual track values
@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
     { int         status;
       char       *root;
       int         i, bval, gval, cover, hgap_min;
-      HITS_TRACK *track;
+      DAZZ_TRACK *track;
       int64       nreads, totlen;
       int64       qgram[MAXQV1];
       int64       qsum, qtotal;

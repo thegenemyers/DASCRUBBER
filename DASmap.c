@@ -57,7 +57,7 @@ int next_read(File_Iterator *it)
   if (fgets(nbuffer,MAX_BUFFER,it->input) == NULL)
     { if (feof(it->input))
         return (1);
-      SYSTEM_ERROR;
+      SYSTEM_READ_ERROR;
     }
   if ((eol = index(nbuffer,'\n')) == NULL)
     { fprintf(stderr,"%s: Line %d in read list is longer than %d chars!\n",
@@ -77,8 +77,8 @@ int next_read(File_Iterator *it)
 }
 
 int main(int argc, char *argv[])
-{ HITS_DB     _db, *db = &_db;
-  HITS_TRACK *map;
+{ DAZZ_DB     _db, *db = &_db;
+  DAZZ_TRACK *map;
 
   int            reps, *pts;
   int            input_pts;

@@ -82,7 +82,7 @@ static char *Usage = "[-v] [-x<int>] <source:db> <target:db>";
 
   //  Read-only
 
-static HITS_DB _DB, *DB = &_DB;    //  Data base
+static DAZZ_DB _DB, *DB = &_DB;    //  Data base
 
 static int64   *TRIM_IDX;
 static int     *TRIM;
@@ -191,7 +191,7 @@ static int Load_Model(int *patch, char *target, int depth)
 }
 
 int main(int argc, char *argv[])
-{ HITS_READ  *reads;
+{ DAZZ_READ  *reads;
   int         nreads;
   int64       boff;
 
@@ -368,7 +368,7 @@ int main(int argc, char *argv[])
   reads  = DB->reads;
   nreads = DB->nreads;
 
-  { HITS_TRACK *track;
+  { DAZZ_TRACK *track;
     int         i;
 
     track = Load_Track(DB,"trim");
@@ -498,7 +498,12 @@ int main(int argc, char *argv[])
     for (i = 0; i < STACK_SIZE; i++)
       BSTACK[i] = NULL;
 
-    target = New_Read_Buffer(DB);
+    { int ml = DB->maxlen;
+      DB->maxlen = 1.5*ml + 10000;
+      target = New_Read_Buffer(DB);
+      DB->maxlen = ml;
+    }
+
     aseq   = BSTACK[0] = New_Read_Buffer(DB);
     segfate[0] = GOOD_LAST;
 
@@ -756,8 +761,8 @@ int main(int argc, char *argv[])
   { int       i, s;
     int       bi, gb;
     int       tlen, first;
-    HITS_DB   NB;
-    HITS_READ newrec;
+    DAZZ_DB   NB;
+    DAZZ_READ newrec;
 #ifdef DEBUG_INDEX
     int       ni;
 #endif
@@ -772,7 +777,7 @@ int main(int argc, char *argv[])
     NB.totlen = ntot;
     NB.maxlen = nmax;
 
-    fwrite(&NB,sizeof(HITS_DB),1,IDX_FILE);
+    fwrite(&NB,sizeof(DAZZ_DB),1,IDX_FILE);
 
 #ifdef DEBUG_INDEX
     printf("\nINDEXING\n");
@@ -807,7 +812,7 @@ int main(int argc, char *argv[])
             newrec.flags  = (reads[i].flags & DB_QV) | DB_BEST;
             if (segfate[bi] > TRIMMED) 
               newrec.flags |= DB_CSS;
-            fwrite(&newrec,sizeof(HITS_READ),1,IDX_FILE);
+            fwrite(&newrec,sizeof(DAZZ_READ),1,IDX_FILE);
             boff += COMPRESSED_LEN(tlen);
 
             if (s == GOOD)
