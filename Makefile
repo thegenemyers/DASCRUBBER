@@ -2,9 +2,15 @@ DEST_DIR = ~/bin
 
 CFLAGS = -O3 -Wall -Wextra -Wno-unused-result -fno-strict-aliasing
 
-ALL = DASqv DAStrim DASpatch DASedit DASmap DASrealign REPqv REPtrim
+ALL = DAScover DASqv DAStrim DASpatch DASedit DASmap DASrealign REPcover REPqv REPtrim
 
 all: $(ALL)
+
+DAScover: DAScover.c align.c align.h DB.c DB.h QV.c QV.h
+	gcc $(CFLAGS) -o DAScover DAScover.c align.c DB.c QV.c -lm
+
+REPcover: REPcover.c DB.c DB.h QV.c QV.h
+	gcc $(CFLAGS) -o REPcover REPcover.c DB.c QV.c -lm
 
 DASqv: DASqv.c align.c align.h DB.c DB.h QV.c QV.h
 	gcc $(CFLAGS) -o DASqv DASqv.c align.c DB.c QV.c -lm

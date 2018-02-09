@@ -120,7 +120,7 @@ int main(int argc, char *argv[])
       else
         printf(" -c??");
       if (hgap_min > 0)
-        printf(" -H%d",hgap_min);
+        printf(" [-H%d]",hgap_min);
       printf(" %s\n\n",root);
 
       if (hgap_min > 0) 

@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
       for (a = 0; a < DB->nreads; a++)
         { tb = TRIM_IDX[a];
           te = TRIM_IDX[a+1];
-          alen  = DB->reads[a].rlen;
+          alen = DB->reads[a].rlen;
           if (alen < HGAP_MIN)
             { nreads -= 1;
               totlen -= alen;

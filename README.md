@@ -193,7 +193,19 @@ is roughly 40X faster than the original daligner run and the collection of overl
 output can be feed directly into a string graph construction process.
 
 ```
-7. REPqv <subject:db> ...
+7. DAScover [-v] [-H<int>] [-mctrack>]+ <subject:db> <overlaps:las> ...
+```
+
+This command takes as input a database \<source\> and a sequence of sorted local alignments
+blocks, \<overlaps\>, produced by an overlap/daligner run for said database.  Using the local
+alignment-pile for each A-read, DAScover produces a histogram of the depth of coverage of
+each trace point tile that is not within one of the intervals of the optionally specified tracks.
+It places this histogram in a .covr track for the bock and these block tracks should be merged
+later with Catrack.  If the -v option is set, the histogram for each block is displayed and an
+estimate of the coverage of the underlying target genome is output.
+
+```
+8. REPqv <subject:db> ...
 ```
 
 This command takes as input a sequence of databases or blocks \<source\> and for each outputs
@@ -204,7 +216,7 @@ the -v output of DASqv at any time after producing the intrinsic quality values 
 the histogram for the entire data base (as opposed to a block of the database).
 
 ```
-8. REPtrim <subject:db> ...
+9. REPtrim <subject:db> ...
 ```
 
 This command takes as input a sequence of databases or blocks \<source\> and for each outputs
@@ -213,3 +225,14 @@ the -v option set.  The .trim track produced by DAStrim must be present for all 
 referred to.  The command is a quick way to get the -v output of DAStrim at any time after
 the fact and to get the statistics for the entire data base (as opposed to a block of the
 database).
+
+```
+10. REPcover <subject:db> ...
+```
+
+This command takes as input a sequence of databases or blocks \<source\> and for each outputs
+a histogram of the coverage of the unmasked portions of the reads in the source along with
+a recommendation of the -c valuee with which to run DASqv.  The .covr track produced by
+DAScover must be present for all sources referred to.  The command is a quick way get the
+-v output of DAScover at any time after producing the coverage histograms and to get the
+histogram and coverage estimate for the entire data base (as opposed to a block of the database.
