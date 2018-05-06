@@ -13,7 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <math.h>
 
 #include "DB.h"
 #include "align.h"
@@ -42,8 +41,6 @@ static int     VERBOSE;
 #define LOWQ  0   //  Gap is spanned by many LAs and patchable
 #define SPAN  1   //  Gap has many paired LAs and patchable
 #define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define ADPRE 3   //  Gap is an adatper break and prefix should be removed
-#define ADSUF 4   //  Gap is an adatper break and suffix should be removed
 #define NOPAT 3   //  Gap could not be patched (internal only)
 
 #define  COVER_LEN     400  //  An overlap covers a point if it extends COVER_LEN to either side.
@@ -635,9 +632,7 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 }
 
 int main(int argc, char *argv[])
-{ FILE       *input;
-  char       *root, *dpwd;
-  char       *las, *lpwd;
+{ char       *root, *dpwd;
   int64       novl;
   DAZZ_TRACK *track;
   int         c;
@@ -665,6 +660,8 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
         exit (1);
       }
   }
@@ -699,57 +696,52 @@ int main(int argc, char *argv[])
     track = Load_Track(DB,"trim");
     if (track != NULL)
       { FILE *afile;
-        int   size, tracklen, extra;
+        char *aname;
+        int   extra, tracklen, size;
+        DAZZ_EXTRA  ex_hgap, ex_cest, ex_good, ex_bad;
 
         TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
         for (i = 0; i <= DB->nreads; i++)
           TRIM_IDX[i] /= sizeof(int);
 
-        //  if newer .trim tracks with -g, -b, -c, -H meta data, grab it
+        //  Get HGAP minimum, and good and bad qv thresholds from .trim extras
 
-        afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
+        aname = Strdup(Catenate(DB->path,".","trim",".anno"),"Allocating anno file");
+        if (aname == NULL)
+          exit (1);
+        afile  = fopen(aname,"r");
+
         fread(&tracklen,sizeof(int),1,afile);
         fread(&size,sizeof(int),1,afile);
         fseeko(afile,0,SEEK_END);
         extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
         fseeko(afile,-extra,SEEK_END);
-        if (extra == 4*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            fread(&HGAP_MIN,sizeof(int),1,afile);
-            fread(&HGAP_MIN,sizeof(int),1,afile);
+        ex_hgap.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_hgap) != 0)
+          { fprintf(stderr,"%s: Hgap threshold extra missing from .trim track?\n",Prog_Name);
+            exit (1);
           }
-        else if (extra == 2*sizeof(int) || extra == 3*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            HGAP_MIN = 0;
+        ex_cest.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_cest) != 0)
+          { fprintf(stderr,"%s: Coverage estimate extra missing from .trim track?\n",Prog_Name);
+            exit (1);
           }
-        else
-          { fprintf(stderr,"%s: trim annotation is out of date, rerun DAStrim\n",Prog_Name);
+        ex_good.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_good) != 0)
+          { fprintf(stderr,"%s: Good QV threshold extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        ex_bad.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_bad) != 0)
+          { fprintf(stderr,"%s: Bad QV threshold extra missing from .trim track?\n",Prog_Name);
             exit (1);
           }
         fclose(afile);
 
-        { int a, t, x;
-          int tb, te;
-
-          x = 0;
-          for (a = 0; a < DB->nreads; a++)
-            { tb = TRIM_IDX[a];
-              te = TRIM_IDX[a+1];
-              if (tb+2 < te)
-                { if (TRIM[tb+2] == ADPRE)
-                    tb += 3;
-                  if (TRIM[te-3] == ADSUF)
-                    te -= 3; 
-                }
-              TRIM_IDX[a] = x;
-              for (t = tb; t < te; t++)
-                TRIM[x++] = TRIM[t]; 
-            }
-          TRIM_IDX[DB->nreads] = x;
-        }
+        HGAP_MIN = (int) ((int64 *) (ex_hgap.value))[0];
+        GOOD_QV  = (int) ((int64 *) (ex_good.value))[0];
+        BAD_QV   = (int) ((int64 *) (ex_bad.value))[0];
       }
     else
       { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);
@@ -757,126 +749,115 @@ int main(int argc, char *argv[])
       }
   }
 
-  //  Initialize statistics gathering
-
-  if (VERBOSE)
-    { npatch = 0;
-      fpatch = 0;
-
-      printf("\nDASpatch -g%d -b%d %s",GOOD_QV,BAD_QV,argv[1]);
-      for (c = 2; c < argc; c++)
-        printf(" %s",argv[c]);
-      printf("\n");
-    }
-
   //  For each .las block/file
 
   dpwd = PathTo(argv[1]);
   root = Root(argv[1],".db");
 
   for (c = 2; c < argc; c++)
-    { las  = Root(argv[c],".las");
+    { Block_Looper *parse;
+      FILE         *input;
 
-      //  Determine if a .las block is being processed and if so get first and last read
-      //    from .db file
+      parse = Parse_Block_Arg(argv[c]);
 
-      { FILE *dbfile;
-        char  buffer[2*MAX_NAME+100];
-        char *p, *eptr;
-        int   i, part, nfiles, nblocks, cutoff, all, oindx;
-        int64 size;
+      while ((input = Next_Block_Arg(parse)) != NULL)
+        { DB_PART  = 0;
+          DB_FIRST = 0;
+          DB_LAST  = DB->nreads;
 
-        DB_PART  = 0;
-        DB_FIRST = 0;
-        DB_LAST  = DB->nreads;
+          //  Determine if a .las block is being processed and if so get first and last read
+          //    from .db file
 
-        p = rindex(las,'.');
-        if (p != NULL)
-          { part = strtol(p+1,&eptr,10);
-            if (*eptr == '\0' && eptr != p+1)
-              { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
-                if (dbfile == NULL)
-                  exit (1);
-                if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_READ_ERROR
-                for (i = 0; i < nfiles; i++)
-                  if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_READ_ERROR
-                for (i = 1; i <= part; i++)
-                  if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_READ_ERROR
-                fclose(dbfile);
-                DB_PART = part;
-                *p = '\0';
+          { FILE *dbfile;
+            char  buffer[2*MAX_NAME+100];
+            char *p, *eptr;
+            int   i, part, nfiles, nblocks, cutoff, all, oindx;
+            int64 size;
+
+            p = rindex(Block_Arg_Root(parse),'.');
+            if (p != NULL)
+              { part = strtol(p+1,&eptr,10);
+                if (*eptr == '\0' && eptr != p+1)
+                  { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
+                    if (dbfile == NULL)
+                      exit (1);
+                    if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
+                      SYSTEM_READ_ERROR
+                    for (i = 0; i < nfiles; i++)
+                      if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
+                      SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
+                      SYSTEM_READ_ERROR
+                    for (i = 1; i <= part; i++)
+                      if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
+                      SYSTEM_READ_ERROR
+                    fclose(dbfile);
+                    DB_PART = part;
+                  }
               }
           }
-      }
 
-      //  Set up QV trimming track
+          //  Set up patch track
 
-      { int len, size;
-										      
-        if (DB_PART > 0)
-          { PR_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,
-                                      Numbered_Suffix(".",DB_PART,".patch.anno")),"w");
-            PR_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,
-                                      Numbered_Suffix(".",DB_PART,".patch.data")),"w");
+          { int len, size;
+
+            if (DB_PART > 0)
+              { PR_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                          Numbered_Suffix(".",DB_PART,".patch.anno")),"w");
+                PR_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                          Numbered_Suffix(".",DB_PART,".patch.data")),"w");
+              }
+            else
+              { PR_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,".patch.anno"),"w");
+                PR_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,".patch.data"),"w");
+              }
+            if (PR_AFILE == NULL || PR_DFILE == NULL)
+              exit (1);
+
+            len  = DB_LAST - DB_FIRST;
+            size = 8;
+            fwrite(&len,sizeof(int),1,PR_AFILE);
+            fwrite(&size,sizeof(int),1,PR_AFILE);
+            PR_INDEX = 0;
+	    fwrite(&PR_INDEX,sizeof(int64),1,PR_AFILE);
           }
-        else
-          { PR_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,".patch.anno"),"w");
-            PR_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,".patch.data"),"w");
-          }
-        if (PR_AFILE == NULL || PR_DFILE == NULL)
-          exit (1);
-										      
-        len  = DB_LAST - DB_FIRST;
-        size = 8;
-        fwrite(&len,sizeof(int),1,PR_AFILE);
-        fwrite(&size,sizeof(int),1,PR_AFILE);
-        PR_INDEX = 0;
-	fwrite(&PR_INDEX,sizeof(int64),1,PR_AFILE);
-      }
 
-      //  Open overlap file
+          //  Get trace point spacing information
 
-      lpwd = PathTo(argv[c]);
-      if (DB_PART)
-        input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
-      else
-        input = Fopen(Catenate(lpwd,"/",las,".las"),"r");
-      if (input == NULL)
-        exit (1);
+          fread(&novl,sizeof(int64),1,input);
+          fread(&TRACE_SPACING,sizeof(int),1,input);
+          ANCHOR_THRESH = ANCHOR_MATCH * TRACE_SPACING;
 
-      free(lpwd);
-      free(las);
+          //  Initialize statistics gathering
 
-      //  Get trace point spacing information
+          if (VERBOSE)
+            { npatch = 0;
+              fpatch = 0;
+              printf("\nDASpatch -g%d -b%d %s %s\n",GOOD_QV,BAD_QV,argv[1],argv[c]);
+            }
 
-      fread(&novl,sizeof(int64),1,input);
-      fread(&TRACE_SPACING,sizeof(int),1,input);
-      ANCHOR_THRESH = ANCHOR_MATCH * TRACE_SPACING;
+          //  Process each read pile
 
-      make_a_pass(input,PATCH_GAPS,1);
+          make_a_pass(input,PATCH_GAPS,1);
 
-      //  Clean up
+          //  If verbose output statistics summary to stdout
 
-      fclose(PR_AFILE);
-      fclose(PR_DFILE);
-    }
+          if (VERBOSE)
+            { if (fpatch == 0)
+                printf("  All %d patches were successful\n",npatch);
+              else
+                printf("  %d out of %d total patches failed\n",fpatch,npatch);
+            }
+    
+          fclose(PR_AFILE);
+          fclose(PR_DFILE);
+        }
 
-  //  If verbose output statistics summary to stdout
-
-  if (VERBOSE)
-    { if (fpatch == 0)
-        printf("%s: All %d patches were successful\n",Prog_Name,npatch);
-      else
-        printf("%s: %d out of %d total patches failed\n",Prog_Name,fpatch,npatch);
+      Free_Block_Arg(parse);
     }
 
   free(dpwd);

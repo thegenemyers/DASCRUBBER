@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <math.h>
 
 #include "DB.h"
 #include "align.h"
@@ -40,7 +39,7 @@
 
 //  Command format and global parameter variables
 
-static char *Usage = " [-v] -g<int> -b<int> <source:db> <overlaps:las> ...";
+static char *Usage = " [-v] [-g<int>] [-b<int>] <source:db> <overlaps:las> ...";
 
 static int     COVERAGE;   //  estimated coverage
 static int     BAD_QV;     //  qv >= and you are "bad"
@@ -53,12 +52,7 @@ static int     VERBOSE;
 #define LOWQ  0   //  Gap is spanned by many LAs and patchable
 #define SPAN  1   //  Gap has many paired LAs and patchable
 #define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define ADPRE 3   //  Gap is due to adaptemer, trim prefix interval to left
-#define ADSUF 4   //  Gap is due to adaptemer, trim suffix interval to right
 #define ADAPT 3   //  Gap is due to adaptemer (internal only)
-
-static int AdPre = ADPRE;
-static int AdSuf = ADSUF;
 
 //  Good patch constants
 
@@ -2134,12 +2128,6 @@ static void GAPS(int aread, Overlap *ovls, int novl)
 
   //  Output .trim track for this read
 
-    if (abeg > 0)
-      { fwrite(&(block[0].beg),sizeof(int),1,TR_DFILE);
-        fwrite(&(block[abeg-1].end),sizeof(int),1,TR_DFILE);
-        fwrite(&AdPre,sizeof(int),1,TR_DFILE);
-        TR_INDEX += 3*sizeof(int);
-      }
     fwrite(&(block[abeg].beg),sizeof(int),1,TR_DFILE);
     fwrite(&(block[abeg].end),sizeof(int),1,TR_DFILE);
     TR_INDEX += 2*sizeof(int);
@@ -2147,12 +2135,6 @@ static void GAPS(int aread, Overlap *ovls, int novl)
       { fwrite(status+i,sizeof(int),1,TR_DFILE);
         fwrite(&(block[i].beg),sizeof(int),1,TR_DFILE);
         fwrite(&(block[i].end),sizeof(int),1,TR_DFILE);
-        TR_INDEX += 3*sizeof(int);
-      }
-    if (aend < nblk)
-      { fwrite(&AdSuf,sizeof(int),1,TR_DFILE);
-        fwrite(&(block[aend].beg),sizeof(int),1,TR_DFILE);
-        fwrite(&(block[nblk-1].end),sizeof(int),1,TR_DFILE);
         TR_INDEX += 3*sizeof(int);
       }
     fwrite(&TR_INDEX,sizeof(int64),1,TR_AFILE);
@@ -2280,12 +2262,18 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 }
 
 int main(int argc, char *argv[])
-{ FILE       *input;
-  char       *root, *dpwd;
-  char       *las, *lpwd;
+{ char       *root, *dpwd;
   int64       novl;
   DAZZ_TRACK *track;
   int         c;
+
+  DAZZ_EXTRA  ex_hgap, ex_cest;
+  DAZZ_EXTRA  ex_good, ex_bad, ex_trim;
+
+  char *good_name = "Good QV threshold";
+  char *bad_name  = "Bad QV threshold";
+  char *trim_name = "Trimming statistics";
+  int64 good64, bad64, tstats[18];
 
   //  Process arguments
 
@@ -2320,20 +2308,10 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
-        exit (1);
-      }
-
-    if (GOOD_QV < 0)
-      { fprintf(stderr,"%s: Must supply -g parameter\n",Prog_Name);
-        exit (1);
-      }
-    if (BAD_QV < 0)
-      { fprintf(stderr,"%s: Must supply -b parameter\n",Prog_Name);
-        exit (1);
-      }
-    if (GOOD_QV > BAD_QV)
-      { fprintf(stderr,"%s: Good QV threshold (%d) > Bad QV threshold (%d) ?\n",
-                       Prog_Name,GOOD_QV,BAD_QV);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
+        fprintf(stderr,"      -g: Use as good qv threshold (and not auto-estimate).\n");
+        fprintf(stderr,"      -b: Use as bad qv threshold (and not auto-estimate).\n");
         exit (1);
       }
   }
@@ -2354,120 +2332,172 @@ int main(int argc, char *argv[])
         exit (1);
       }
     Trim_DB(DB);
-
-    track = Load_Track(DB,"qual");
-    if (track != NULL)
-      { FILE *afile;
-        int   size, tracklen, extra;
-
-        QV_IDX = (int64 *) track->anno;
-        QV     = (uint8 *) track->data;
-
-        //  if newer .qual tracks with -c meta data, grab it
-
-        afile = fopen(Catenate(DB->path,".","qual",".anno"),"r");
-        fread(&tracklen,sizeof(int),1,afile);
-        fread(&size,sizeof(int),1,afile);
-        fseeko(afile,0,SEEK_END);
-        extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
-        fseeko(afile,-extra,SEEK_END);
-        if (extra == 2*sizeof(int))
-          { fread(&COVERAGE,sizeof(int),1,afile);
-            fread(&HGAP_MIN,sizeof(int),1,afile);
-          }
-        else if (extra == sizeof(int))
-          { fread(&COVERAGE,sizeof(int),1,afile);
-            HGAP_MIN = 0;
-          }
-        else
-          { COVERAGE = -1;
-            HGAP_MIN = 0;
-          }
-        fclose(afile);
-      }
-    else
-      { fprintf(stderr,"%s: Must have a 'qual' track, run DASqv\n",Prog_Name);
-        exit (1);
-      }
   }
 
-  //  Initialize statistics gathering
+  //  Get .qual track and extras
 
-  if (VERBOSE)
-    { nreads  = 0;
-      totlen  = 0;
-      nelim   = 0;
-      n5trm   = 0;
-      n3trm   = 0;
-      natrm   = 0;
-      nelimbp = 0;
-      n5trmbp = 0;
-      n3trmbp = 0;
-      natrmbp = 0;
+  track = Load_Track(DB,"qual");
+  if (track != NULL)
+    { FILE       *afile;
+      char       *aname;
+      int         extra, tracklen, size;
+      DAZZ_EXTRA  ex_qvs, ex_dif;
 
-      ngaps   = 0;
-      nlowq   = 0;
-      nspan   = 0;
-      nchim   = 0;
-      ngapsbp = 0;
-      nlowqbp = 0;
-      nspanbp = 0;
-      nchimbp = 0;
+      QV_IDX = (int64 *) track->anno;
+      QV     = (uint8 *) track->data;
 
-      printf("\nDAStrim -g%d -b%d %s", GOOD_QV,BAD_QV,argv[1]);
-      for (c = 2; c < argc; c++)
-        printf(" %s",argv[c]);
-      printf("\n");
+      aname = Strdup(Catenate(DB->path,".","qual",".anno"),"Allocating anno file");
+      if (aname == NULL)
+        exit (1);
+      afile  = fopen(aname,"r");
+
+      fread(&tracklen,sizeof(int),1,afile);
+      fread(&size,sizeof(int),1,afile);
+      fseeko(afile,0,SEEK_END);
+      extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+      fseeko(afile,-extra,SEEK_END);
+      ex_hgap.nelem = 0;
+      if (Read_Extra(afile,aname,&ex_hgap) != 0)
+        { fprintf(stderr,"%s: Hgap threshold extra missing from .qual track?\n",Prog_Name);
+          exit (1);
+        }
+      ex_cest.nelem = 0;
+      if (Read_Extra(afile,aname,&ex_cest) != 0)
+        { fprintf(stderr,"%s: Coverage estimate extra missing from .qual track?\n",Prog_Name);
+          exit (1);
+        }
+      ex_qvs.nelem = 0;
+      if (Read_Extra(afile,aname,&ex_qvs) != 0)
+        { fprintf(stderr,"%s: QV histogram extra missing from .qual track?\n",Prog_Name);
+          exit (1);
+        }
+      ex_dif.nelem = 0;
+      if (Read_Extra(afile,aname,&ex_dif) != 0)
+        { fprintf(stderr,"%s: Differences histogram extra missing from .qual track?\n",Prog_Name);
+          exit (1);
+        }
+      fclose(afile);
+
+      COVERAGE = (int) ((int64 *) (ex_cest.value))[0];
+      HGAP_MIN = (int) ((int64 *) (ex_hgap.value))[0];
+
+      //  Compute -g and -b parameters
+
+      { int64  qsum, qtotal;
+        int64 *qgram;
+        int    i, maxqv;
+        int    gv, bv;
+
+        qgram = (int64 *) (ex_qvs.value);
+        maxqv = ex_qvs.nelem - 1;
+
+        qtotal = 0;
+        for (i = 0; i < maxqv; i++)
+          qtotal += qgram[i];
+
+        bv = gv = -1;
+        qsum = 0;
+        for (i = maxqv-1; i >= 0; i--)
+          if (qgram[i] > 0)
+            { qsum += qgram[i];
+              if ((100.*qsum)/qtotal > 7. && bv < 0)
+                bv = i+1;
+              if ((100.*qsum)/qtotal > 20. && gv < 0)
+                gv = i+1;
+            }
+
+        if (GOOD_QV < 0)
+          GOOD_QV = gv;
+        if (BAD_QV < 0)
+          BAD_QV = bv;
+      }
+    }
+  else
+    { fprintf(stderr,"%s: Must have a 'qual' track, run DASqv\n",Prog_Name);
+      exit (1);
     }
 
-  //  Determine if overlap block is being processed and if so get first and last read
-  //    from .db file
+  if (GOOD_QV > BAD_QV)
+    { fprintf(stderr,"%s: Good QV threshold (%d) > Bad QV threshold (%d) ?\n",
+                     Prog_Name,GOOD_QV,BAD_QV);
+      exit (1);
+    }
+
+  //  Setup extras
+
+  ex_good.vtype = DB_INT;     // Good QV threshold
+  ex_good.nelem = 1;
+  ex_good.accum = DB_EXACT;
+  ex_good.name  = good_name;
+  good64 = GOOD_QV;
+  ex_good.value = &good64;
+
+  ex_bad.vtype = DB_INT;      // Bad QV threshold
+  ex_bad.nelem = 1;
+  ex_bad.accum = DB_EXACT;
+  ex_bad.name  = bad_name;
+  bad64 = GOOD_QV;
+  ex_bad.value = &bad64;
+
+  ex_trim.vtype = DB_INT;     // Trim statistics
+  ex_trim.nelem = 16;
+  ex_trim.accum = DB_SUM;
+  ex_trim.name  = trim_name;
+  ex_trim.value = &tstats;
+
+  //  For each .las file do
 
   dpwd = PathTo(argv[1]);
   root = Root(argv[1],".db");
 
   for (c = 2; c < argc; c++)
-    { las  = Root(argv[c],".las");
+    { Block_Looper *parse;
+      FILE         *input;
 
-      { FILE *dbfile;
-        char  buffer[2*MAX_NAME+100];
-        char *p, *eptr;
-        int   i, part, nfiles, nblocks, cutoff, all, oindx;
-        int64 size;
+      parse = Parse_Block_Arg(argv[c]);
 
-        DB_PART  = 0;
-        DB_FIRST = 0;
-        DB_LAST  = DB->nreads;
+      while ((input = Next_Block_Arg(parse)) != NULL)
+        { DB_PART  = 0;
+          DB_FIRST = 0;
+          DB_LAST  = DB->nreads;
 
-        p = rindex(las,'.');
-        if (p != NULL)
-          { part = strtol(p+1,&eptr,10);
-            if (*eptr == '\0' && eptr != p+1)
-              { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
-                if (dbfile == NULL)
-                  exit (1);
-                if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_READ_ERROR
-                for (i = 0; i < nfiles; i++)
-                  if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_READ_ERROR
-                for (i = 1; i <= part; i++)
-                  if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_READ_ERROR
-                fclose(dbfile);
-                DB_PART = part;
-                *p = '\0';
+          //  Determine if overlap block is being processed and if so get first and last read
+          //    from .db file
+
+          { FILE *dbfile;
+            char  buffer[2*MAX_NAME+100];
+            char *p, *eptr;
+            int   i, part, nfiles, nblocks, cutoff, all, oindx;
+            int64 size;
+
+            p = rindex(Block_Arg_Root(parse),'.');
+            if (p != NULL)
+              { part = strtol(p+1,&eptr,10);
+                if (*eptr == '\0' && eptr != p+1)
+                  { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
+                    if (dbfile == NULL)
+                      exit (1);
+                    if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
+                      SYSTEM_READ_ERROR
+                    for (i = 0; i < nfiles; i++)
+                      if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
+                      SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
+                      SYSTEM_READ_ERROR
+                    for (i = 1; i <= part; i++)
+                      if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
+                      SYSTEM_READ_ERROR
+                    fclose(dbfile);
+                    DB_PART = part;
+                  }
               }
           }
-      }
 
-      //  Set up QV trimming track
+          //  Set up QV trimming track
 
 #define SETUP(AFILE,DFILE,INDEX,anno,data,S)					\
 { int len, size;								\
@@ -2493,148 +2523,186 @@ int main(int argc, char *argv[])
   fwrite(&INDEX,sizeof(int64),1,AFILE);						\
 }
 
-      SETUP(TR_AFILE,TR_DFILE,TR_INDEX,".trim.anno",".trim.data",8)
+          SETUP(TR_AFILE,TR_DFILE,TR_INDEX,".trim.anno",".trim.data",8)
 
 #ifdef ANNOTATE
-      SETUP(HQ_AFILE,HQ_DFILE,HQ_INDEX,".hq.anno",".hq.data",0)
-      SETUP(SN_AFILE,SN_DFILE,SN_INDEX,".span.anno",".span.data",0)
-      SETUP(SP_AFILE,SP_DFILE,SP_INDEX,".split.anno",".split.data",0)
-      SETUP(AD_AFILE,AD_DFILE,AD_INDEX,".adapt.anno",".adapt.data",0)
+          SETUP(HQ_AFILE,HQ_DFILE,HQ_INDEX,".hq.anno",".hq.data",0)
+          SETUP(SN_AFILE,SN_DFILE,SN_INDEX,".span.anno",".span.data",0)
+          SETUP(SP_AFILE,SP_DFILE,SP_INDEX,".split.anno",".split.data",0)
+          SETUP(AD_AFILE,AD_DFILE,AD_INDEX,".adapt.anno",".adapt.data",0)
 
-      SETUP(HL_AFILE,HL_DFILE,HL_INDEX,".hole.anno",".hole.data",0)
+          SETUP(HL_AFILE,HL_DFILE,HL_INDEX,".hole.anno",".hole.data",0)
 
-      SETUP(KP_AFILE,KP_DFILE,KP_INDEX,".keep.anno",".keep.data",0)
+          SETUP(KP_AFILE,KP_DFILE,KP_INDEX,".keep.anno",".keep.data",0)
 #endif
 
-      //  Open overlap file
+          //  Get trace point spacing information
 
-      lpwd = PathTo(argv[c]);
-      if (DB_PART)
-        input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
-      else
-        input = Fopen(Catenate(lpwd,"/",las,".las"),"r");
-      if (input == NULL)
-        exit (1);
+          fread(&novl,sizeof(int64),1,input);
+          fread(&TRACE_SPACING,sizeof(int),1,input);
 
-      free(lpwd);
-      free(las);
+          //  Initialize statistics gathering
 
-      //  Get trace point spacing information
+          nreads  = 0;
+          totlen  = 0;
+          nelim   = 0;
+          n5trm   = 0;
+          n3trm   = 0;
+          natrm   = 0;
+          nelimbp = 0;
+          n5trmbp = 0;
+          n3trmbp = 0;
+          natrmbp = 0;
+          ngaps   = 0;
+          nlowq   = 0;
+          nspan   = 0;
+          nchim   = 0;
+          ngapsbp = 0;
+          nlowqbp = 0;
+          nspanbp = 0;
+          nchimbp = 0;
 
-      fread(&novl,sizeof(int64),1,input);
-      fread(&TRACE_SPACING,sizeof(int),1,input);
+          if (VERBOSE)
+            { printf("\nDAStrim");
+              if (HGAP_MIN  > 0)
+                printf(" -H%d",HGAP_MIN);
+              printf(" -c%d -g%d -b%d %s %s\n",COVERAGE,GOOD_QV,BAD_QV,argv[1],argv[c]);
+            }
 
-      make_a_pass(input,GAPS,1);
+          //  Process each read pile
 
-      //  Clean up
+          make_a_pass(input,GAPS,1);
 
-      fwrite(&GOOD_QV,sizeof(int),1,TR_AFILE);
-      fwrite(&BAD_QV,sizeof(int),1,TR_AFILE);
-      fwrite(&COVERAGE,sizeof(int),1,TR_AFILE);
-      fwrite(&HGAP_MIN,sizeof(int),1,TR_AFILE);
+          //  Write out extras and close .trim track
 
-      fclose(TR_AFILE);
-      fclose(TR_DFILE);
+          tstats[ 0] = nelim;
+          tstats[ 1] = n5trm;
+          tstats[ 2] = n3trm;
+          tstats[ 3] = natrm;
+          tstats[ 4] = nelimbp;
+          tstats[ 5] = n5trmbp;
+          tstats[ 6] = n3trmbp;
+          tstats[ 7] = natrmbp;
+          tstats[ 8] = ngaps;
+          tstats[ 9] = nlowq;
+          tstats[10] = nspan;
+          tstats[11] = nchim;
+          tstats[12] = ngapsbp;
+          tstats[13] = nlowqbp;
+          tstats[14] = nspanbp;
+          tstats[15] = nchimbp;
+
+          Write_Extra(TR_AFILE,&ex_hgap);
+          Write_Extra(TR_AFILE,&ex_cest);
+          Write_Extra(TR_AFILE,&ex_good);
+          Write_Extra(TR_AFILE,&ex_bad);
+          Write_Extra(TR_AFILE,&ex_trim);
+
+          fclose(TR_AFILE);
+          fclose(TR_DFILE);
 
 #ifdef ANNOTATE
-      fclose(HQ_AFILE);
-      fclose(HQ_DFILE);
+          fclose(HQ_AFILE);
+          fclose(HQ_DFILE);
 
-      fclose(SN_AFILE);
-      fclose(SN_DFILE);
+          fclose(SN_AFILE);
+          fclose(SN_DFILE);
 
-      fclose(SP_AFILE);
-      fclose(SP_DFILE);
+          fclose(SP_AFILE);
+          fclose(SP_DFILE);
 
-      fclose(AD_AFILE);
-      fclose(AD_DFILE);
+          fclose(AD_AFILE);
+          fclose(AD_DFILE);
 
-      fclose(HL_AFILE);
-      fclose(HL_DFILE);
+          fclose(HL_AFILE);
+          fclose(HL_DFILE);
 
-      fclose(KP_AFILE);
-      fclose(KP_DFILE);
+          fclose(KP_AFILE);
+          fclose(KP_DFILE);
 #endif
-    }
 
-  //  If verbose output statistics summary to stdout
+          //  If verbose output statistics summary to stdout
 
-  if (VERBOSE)
-    { printf("\nInput:    ");
-      Print_Number((int64) nreads,7,stdout);
-      printf(" (100.0%%) reads     ");
-      Print_Number(totlen,12,stdout);
-      printf(" (100.0%%) bases");
-      if (HGAP_MIN > 0)
-        { printf(" (another ");
-          Print_Number((int64) ((DB_LAST-DB_FIRST)-nreads),0,stdout);
-          printf(" were < H-length)");
+          if (VERBOSE)
+            { printf("\n  Input:    ");
+              Print_Number((int64) nreads,7,stdout);
+              printf(" (100.0%%) reads     ");
+              Print_Number(totlen,12,stdout);
+              printf(" (100.0%%) bases");
+              if (HGAP_MIN > 0)
+                { printf(" (another ");
+                  Print_Number((int64) ((DB_LAST-DB_FIRST)-nreads),0,stdout);
+                  printf(" were < H-length)");
+                }
+              printf("\n");
+
+              printf("  Trimmed:  ");
+              Print_Number(nelim,7,stdout);
+              printf(" (%5.1f%%) reads     ",(100.*nelim)/nreads);
+              Print_Number(nelimbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*nelimbp)/totlen);
+
+              printf("  5' trim:  ");
+              Print_Number(n5trm,7,stdout);
+              printf(" (%5.1f%%) reads     ",(100.*n5trm)/nreads);
+              Print_Number(n5trmbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*n5trmbp)/totlen);
+
+              printf("  3' trim:  ");
+              Print_Number(n3trm,7,stdout);
+              printf(" (%5.1f%%) reads     ",(100.*n3trm)/nreads);
+              Print_Number(n3trmbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*n3trmbp)/totlen);
+
+              printf("  Adapter:  ");
+              Print_Number(natrm,7,stdout);
+              printf(" (%5.1f%%) reads     ",(100.*natrm)/nreads);
+              Print_Number(natrmbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*natrmbp)/totlen);
+
+              printf("\n");
+
+              printf("  Gaps:     ");
+              Print_Number(ngaps,7,stdout);
+              printf(" (%5.1f%%) gaps      ",(100.*(ngaps))/nreads);
+              Print_Number(ngapsbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(ngapsbp))/totlen);
+
+              printf("    Low QV: ");
+              Print_Number(nlowq,7,stdout);
+              printf(" (%5.1f%%) gaps      ",(100.*(nlowq))/nreads);
+              Print_Number(nlowqbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(nlowqbp))/totlen);
+
+              printf("    Span'd: ");
+              Print_Number(nspan,7,stdout);
+              printf(" (%5.1f%%) gaps      ",(100.*(nspan))/nreads);
+              Print_Number(nspanbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(nspanbp))/totlen);
+
+              printf("    Break:  ");
+              Print_Number(nchim,7,stdout);
+              printf(" (%5.1f%%) gaps      ",(100.*(nchim))/nreads);
+              Print_Number(nchimbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(nchimbp))/totlen);
+
+              printf("\n");
+
+              printf("  Clipped:  ");
+              Print_Number(n5trm+n3trm+nelim+natrm+nchim,7,stdout);
+              printf(" clips              ");
+              Print_Number(n5trmbp+n3trmbp+nelimbp+natrmbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(n5trmbp+n3trmbp+nelimbp+natrmbp+nchimbp))/totlen);
+
+              printf("  Patched:  ");
+              Print_Number(nlowq+nspan,7,stdout);
+              printf(" patches            ");
+              Print_Number(nlowqbp+nspanbp,12,stdout);
+              printf(" (%5.1f%%) bases\n",(100.*(nlowqbp+nspanbp))/totlen);
+            }
         }
-      printf("\n");
 
-      printf("Trimmed:  ");
-      Print_Number(nelim,7,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*nelim)/nreads);
-      Print_Number(nelimbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*nelimbp)/totlen);
-
-      printf("5' trim:  ");
-      Print_Number(n5trm,7,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*n5trm)/nreads);
-      Print_Number(n5trmbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*n5trmbp)/totlen);
-
-      printf("3' trim:  ");
-      Print_Number(n3trm,7,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*n3trm)/nreads);
-      Print_Number(n3trmbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*n3trmbp)/totlen);
-
-      printf("Adapter:  ");
-      Print_Number(natrm,7,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*natrm)/nreads);
-      Print_Number(natrmbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*natrmbp)/totlen);
-
-      printf("\n");
-
-      printf("Gaps:     ");
-      Print_Number(ngaps,7,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(ngaps))/nreads);
-      Print_Number(ngapsbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(ngapsbp))/totlen);
-
-      printf("  Low QV: ");
-      Print_Number(nlowq,7,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nlowq))/nreads);
-      Print_Number(nlowqbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nlowqbp))/totlen);
-
-      printf("  Span'd: ");
-      Print_Number(nspan,7,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nspan))/nreads);
-      Print_Number(nspanbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nspanbp))/totlen);
-
-      printf("  Break:  ");
-      Print_Number(nchim,7,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nchim))/nreads);
-      Print_Number(nchimbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nchimbp))/totlen);
-
-      printf("\n");
-
-      printf("Clipped:  ");
-      Print_Number(n5trm+n3trm+nelim+natrm+nchim,7,stdout);
-      printf(" clips              ");
-      Print_Number(n5trmbp+n3trmbp+nelimbp+natrmbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(n5trmbp+n3trmbp+nelimbp+natrmbp+nchimbp))/totlen);
-
-      printf("Patched:  ");
-      Print_Number(nlowq+nspan,7,stdout);
-      printf(" patches            ");
-      Print_Number(nlowqbp+nspanbp,12,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nlowqbp+nspanbp))/totlen);
+      Free_Block_Arg(parse);
     }
 
   free(dpwd);

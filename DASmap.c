@@ -106,6 +106,8 @@ int main(int argc, char *argv[])
 
     if (argc <= 1)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -p: Pretty print (vs easy to parse).\n");
         exit (1);
       }
   }

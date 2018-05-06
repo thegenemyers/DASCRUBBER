@@ -75,8 +75,6 @@ static char *Usage = "[-v] [-x<int>] <source:db> <target:db>";
 #define LOWQ  0   //  Gap is spanned by many LAs and patchable
 #define SPAN  1   //  Gap has many paired LAs and patchable
 #define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define ADPRE 3   //  Gap is an adatper break and prefix should be removed
-#define ADSUF 4   //  Gap is an adatper break and suffix should be removed
 
 //  Global Variables (must exist across the processing of each pile)
 
@@ -205,9 +203,6 @@ int main(int argc, char *argv[])
   char       *pwd2, *root2;
   int         VERBOSE;
   int         CUTOFF;
-  int         GOOD_QV;
-  int         BAD_QV;
-  int         COVERAGE;
   int         HGAP_MIN;
 
   int         nfiles;        //  contents of source .db file
@@ -253,6 +248,9 @@ int main(int argc, char *argv[])
 
     if (argc != 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
+        fprintf(stderr,"      -x: minimum length for edited reads\n");
         exit (1);
       }
   }
@@ -374,64 +372,35 @@ int main(int argc, char *argv[])
     track = Load_Track(DB,"trim");
     if (track != NULL)
       { FILE *afile;
-        int   size, tracklen, extra;
+        char *aname;
+        int   extra, tracklen, size;
+        DAZZ_EXTRA  ex_hgap;
 
         TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
         for (i = 0; i <= nreads; i++)
           TRIM_IDX[i] /= sizeof(int);
 
-        //  if newer .trim tracks with -g, -b, -c, -H meta data, grab it
+        //  Get HGAP minimum from .trim extras
 
-        afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
+        aname = Strdup(Catenate(DB->path,".","trim",".anno"),"Allocating anno file");
+        if (aname == NULL)
+          exit (1);
+        afile  = fopen(aname,"r");
+
         fread(&tracklen,sizeof(int),1,afile);
         fread(&size,sizeof(int),1,afile);
         fseeko(afile,0,SEEK_END);
         extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
         fseeko(afile,-extra,SEEK_END);
-        if (extra == 4*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            fread(&COVERAGE,sizeof(int),1,afile);
-            fread(&HGAP_MIN,sizeof(int),1,afile);
-          }
-        else if (extra == 3*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            fread(&COVERAGE,sizeof(int),1,afile);
-            HGAP_MIN = 0;
-          }
-        else if (extra == 2*sizeof(int))
-          { fread(&GOOD_QV,sizeof(int),1,afile);
-            fread(&BAD_QV,sizeof(int),1,afile);
-            COVERAGE = -1;
-            HGAP_MIN = 0;
-          }
-        else
-          { fprintf(stderr,"%s: trim annotation is out of date, rerun DAStrim\n",Prog_Name);
+        ex_hgap.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_hgap) != 0)
+          { fprintf(stderr,"%s: Hgap threshold extra missing from .trim track?\n",Prog_Name);
             exit (1);
           }
         fclose(afile);
 
-        { int a, t, x;
-          int tb, te;
-
-          x = 0;
-          for (a = 0; a < DB->nreads; a++)
-            { tb = TRIM_IDX[a];
-              te = TRIM_IDX[a+1];
-              if (tb+2 < te)
-                { if (TRIM[tb+2] == ADPRE)
-                    tb += 3;
-                  if (TRIM[te-3] == ADSUF)
-                    te -= 3;
-                }
-              TRIM_IDX[a] = x;
-              for (t = tb; t < te; t++)
-                TRIM[x++] = TRIM[t];
-            }
-          TRIM_IDX[DB->nreads] = x;
-        }
+        HGAP_MIN = (int) ((int64 *) (ex_hgap.value))[0];
       }
     else
       { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);

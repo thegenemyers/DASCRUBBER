@@ -311,9 +311,7 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 }
 
 int main(int argc, char *argv[])
-{ FILE  *input;
-  char  *root, *dpwd;
-  char  *las, *lpwd;
+{ char  *root, *dpwd;
   int64  novl, hgap64;
   int    c;
 
@@ -364,6 +362,10 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
+        fprintf(stderr,"      -H: HGAP minimum length threshold.\n");
+        fprintf(stderr,"      -m: repeat masks, stats not collected over these intervals\n");
         exit (1);
       }
   }
@@ -431,9 +433,6 @@ int main(int argc, char *argv[])
   //  Determine if overlap block is being processed and if so get first and last read
   //    from .db file
 
-  dpwd = PathTo(argv[1]);
-  root = Root(argv[1],".db");
-
   ex_covr.vtype = DB_INT;
   ex_covr.nelem = MAX_COVER+1;
   ex_covr.accum = DB_SUM;
@@ -447,158 +446,156 @@ int main(int argc, char *argv[])
   hgap64 = HGAP_MIN;
   ex_hgap.value = &hgap64;
 
+  dpwd = PathTo(argv[1]);
+  root = Root(argv[1],".db");
+
   for (c = 2; c < argc; c++)
-    { las  = Root(argv[c],".las");
+    { Block_Looper *parse;
+      FILE         *input;
 
-      { FILE *dbfile;
-        char  buffer[2*MAX_NAME+100];
-        char *p, *eptr;
-        int   i, part, nfiles, nblocks, cutoff, all, oindx;
-        int64 size;
+      parse = Parse_Block_Arg(argv[c]);
 
-        DB_PART  = 0;
-        DB_FIRST = 0;
-        DB_LAST  = DB->nreads;
+      while ((input = Next_Block_Arg(parse)) != NULL)
+        { DB_PART  = 0;
+          DB_FIRST = 0;
+          DB_LAST  = DB->nreads;
 
-        p = rindex(las,'.');
-        if (p != NULL)
-          { part = strtol(p+1,&eptr,10);
-            if (*eptr == '\0' && eptr != p+1)
-              { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
-                if (dbfile == NULL)
-                  exit (1);
-                if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_READ_ERROR
-                for (i = 0; i < nfiles; i++)
-                  if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_READ_ERROR
-                for (i = 1; i <= part; i++)
-                  if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_READ_ERROR
-                fclose(dbfile);
-                DB_PART = part;
-                *p = '\0';
+          { FILE *dbfile;
+            char  buffer[2*MAX_NAME+100];
+            char *p, *eptr;
+            int   i, part, nfiles, nblocks, cutoff, all, oindx;
+            int64 size;
+
+            p = rindex(Block_Arg_Root(parse),'.');
+            if (p != NULL)
+              { part = strtol(p+1,&eptr,10);
+                if (*eptr == '\0' && eptr != p+1)
+                  { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
+                    if (dbfile == NULL)
+                      exit (1);
+                    if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
+                      SYSTEM_READ_ERROR
+                    for (i = 0; i < nfiles; i++)
+                      if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
+                      SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
+                      SYSTEM_READ_ERROR
+                    for (i = 1; i <= part; i++)
+                      if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
+                      SYSTEM_READ_ERROR
+                    fclose(dbfile);
+                    DB_PART = part;
+                  }
               }
           }
-      }
 
-      //  Set up cover extra's track
+          //  Set up cover extra's track
 
-      if (DB_PART > 0)
-        CV_ANAME = Strdup(Catenate(dpwd,PATHSEP,root,
-                        Numbered_Suffix(".",DB_PART,".covr.anno")),"Allocating cover anno name");
-      else
-        CV_ANAME = Strdup(Catenate(dpwd,PATHSEP,root,".covr.anno"),"Allocating cover anno name");
-      CV_AFILE = Fopen(CV_ANAME,"w");
-      if (CV_ANAME == NULL || CV_AFILE == NULL)
-        exit (1);
+          if (DB_PART > 0)
+           CV_ANAME = Strdup(Catenate(dpwd,PATHSEP,root,
+                           Numbered_Suffix(".",DB_PART,".covr.anno")),"Allocating cover anno name");
+          else
+           CV_ANAME = Strdup(Catenate(dpwd,PATHSEP,root,".covr.anno"),"Allocating cover anno name");
+          CV_AFILE = Fopen(CV_ANAME,"w");
+          if (CV_ANAME == NULL || CV_AFILE == NULL)
+            exit (1);
 
-      { int size, length;
+          { int size, length;
 
-        length = 0;
-        size   = 1;
-        fwrite(&length,sizeof(int),1,CV_AFILE);
-        fwrite(&size,sizeof(int),1,CV_AFILE);
-      }
+            length = 0;
+            size   = 1;
+            fwrite(&length,sizeof(int),1,CV_AFILE);
+            fwrite(&size,sizeof(int),1,CV_AFILE);
+          }
 
-      //  Open overlap file
+          //  Get trace point spacing information
 
-      lpwd = PathTo(argv[c]);
-      if (DB_PART > 0)
-        input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
-      else
-        input = Fopen(Catenate(lpwd,"/",las,".las"),"r");
-      if (input == NULL)
-        exit (1);
+          fread(&novl,sizeof(int64),1,input);
+          fread(&TRACE_SPACING,sizeof(int),1,input);
 
-      free(lpwd);
-      free(las);
+          //  Initialize statistics gathering
 
-      //  Get trace point spacing information
-
-      fread(&novl,sizeof(int64),1,input);
-      fread(&TRACE_SPACING,sizeof(int),1,input);
-
-      //  Initialize statistics gathering
-
-      if (VERBOSE)
-        { nreads = 0;
-          totlen = 0;
-          printf("\nDAScover %s %s\n",argv[1],argv[c]);
-        }
-
-      { int i;
-
-        for (i = 0; i <= MAX_COVER; i++)
-          Cov_Hist[i] = 0;
-      }
-
-      //  Process each read pile
-
-      make_a_pass(input,HISTOGRAM_COVER,0);
-
-      //  If verbose output statistics summary to stdout
-
-      if (VERBOSE)
-        { int   i, cover;
-          int64 ssum, stotal;
-
-          printf("\nInput:  ");
-          Print_Number(nreads,7,stdout);
-          printf("reads,  ");
-          Print_Number(totlen,12,stdout);
-          printf(" bases");
-          if (HGAP_MIN > 0)
-            { printf(" (another ");
-              Print_Number((DB_LAST-DB_FIRST) - nreads,0,stdout);
-              printf(" were < H-length)");
+          if (VERBOSE)
+            { nreads = 0;
+              totlen = 0;
+              printf("\nDAScover %s %s\n",argv[1],argv[c]);
             }
-          printf("\n");
+
+          { int i;
+
+            for (i = 0; i <= MAX_COVER; i++)
+              Cov_Hist[i] = 0;
+          }
+
+          //  Process each read pile
+
+          make_a_pass(input,HISTOGRAM_COVER,0);
+
+          //  If verbose output statistics summary to stdout
+
+          if (VERBOSE)
+            { int   i, cover;
+              int64 ssum, stotal;
+int64 acov;
+
+              printf("\nInput:  ");
+              Print_Number(nreads,7,stdout);
+              printf("reads,  ");
+              Print_Number(totlen,12,stdout);
+              printf(" bases");
+              if (HGAP_MIN > 0)
+                { printf(" (another ");
+                  Print_Number((DB_LAST-DB_FIRST) - nreads,0,stdout);
+                  printf(" were < H-length)");
+                }
+              printf("\n");
  
-          stotal = 0;
-          for (i = 0; i <= MAX_COVER; i++)
-            stotal += Cov_Hist[i];
+              stotal = 0;
+              for (i = 0; i <= MAX_COVER; i++)
+                stotal += Cov_Hist[i];
 
-          printf("\nCoverage Histogram\n\n");
-          ssum = Cov_Hist[MAX_COVER];
-          if (ssum > 0)
-            printf("    %4d:  %9lld  %5.1f%%\n\n",
-                   MAX_COVER,Cov_Hist[MAX_COVER],(100.*ssum)/stotal);
-          stotal -= ssum;
-          ssum    = 0;
-          for (i = MAX_COVER-1; i >= 0; i--) 
-            if (Cov_Hist[i] > 0)
-              { ssum += Cov_Hist[i];
-                printf("    %4d:  %9lld  %5.1f%%\n",
-                       i,Cov_Hist[i],(100.*ssum)/stotal);
-              }
+              printf("\nCoverage Histogram\n\n");
+              ssum = Cov_Hist[MAX_COVER];
+              if (ssum > 0)
+                printf("    %4d:  %9lld  %5.1f%%\n\n",
+                       MAX_COVER,Cov_Hist[MAX_COVER],(100.*ssum)/stotal);
+              stotal -= ssum;
+              ssum    = 0;
+acov = 0;
+              for (i = MAX_COVER-1; i >= 0; i--) 
+                if (Cov_Hist[i] > 0)
+                  { ssum += Cov_Hist[i];
+                    printf("    %4d:  %9lld  %5.1f%%\n",
+                           i,Cov_Hist[i],(100.*ssum)/stotal);
+acov += i*Cov_Hist[i];
+                  }
+printf("  Average non-zero cover = %lld\n",acov/(stotal-Cov_Hist[0]));
 
-          i = 0;
-          while (Cov_Hist[i+1] < Cov_Hist[i])
-            i += 1;
-          for (cover = i++; i < MAX_COVER; i++)
-            if (Cov_Hist[cover] < Cov_Hist[i])
-              cover = i;
+              i = 0;
+              while (Cov_Hist[i+1] < Cov_Hist[i])
+                i += 1;
+              for (cover = i++; i < MAX_COVER; i++)
+                if (Cov_Hist[cover] < Cov_Hist[i])
+                  cover = i;
 
-          printf("\n  Coverage is estimated at %d\n\n",cover);
+              printf("\n  Coverage is estimated at %d\n\n",cover);
+            }
+
+          //  Output coverage histogram
+
+          Write_Extra(CV_AFILE,&ex_covr);
+          Write_Extra(CV_AFILE,&ex_hgap);
+
+          fclose(CV_AFILE);
+          free(CV_ANAME);
         }
 
-      //  Output coverage histogram
-
-      Write_Extra(CV_AFILE,&ex_covr);
-      Write_Extra(CV_AFILE,&ex_hgap);
-
-      fclose(CV_AFILE);
-      free(CV_ANAME);
+      Free_Block_Arg(parse);
     }
-
-  //  Clean up
 
   free(dpwd);
   free(root);

@@ -23,7 +23,7 @@
 
 #undef  QV_DEBUG
 
-static char *Usage = "[-v] [-H<int>] -c<int> <source:db> <overlaps:las> ...";
+static char *Usage = "[-v] [-c<int>] <source:db> <overlaps:las> ...";
 
 #define  MAXQV   50     //  Max QV score is 50
 #define  MAXQV1  51
@@ -32,7 +32,8 @@ static char *Usage = "[-v] [-H<int>] -c<int> <source:db> <overlaps:las> ...";
 #define  PARTIAL .20    //  Partial terminal segments covering this percentage are scored
 
 static int     VERBOSE;
-static int     QV_DEEP;   //  # of best diffs to average for QV score
+static int     COVERAGE;  //  Estimated coverage of genome
+static int       QV_DEEP;   //  # of best diffs to average for QV score
 static int     HGAP_MIN;  //  Under this length do not process for HGAP
 
 static int     TRACE_SPACING;  //  Trace spacing (from .las file)
@@ -51,6 +52,7 @@ static int64   QV_INDEX;   //  Current index into .qual.data file
 
 static int64 nreads, totlen;
 static int64 qgram[MAXQV1], sgram[MAXQV1];
+
 
 //  For each pile, calculate QV scores of the aread at tick spacing TRACE_SPACING
 
@@ -392,11 +394,17 @@ static int make_a_pass(FILE *input, void (*ACTION)(int, Overlap *, int), int tra
 }
 
 int main(int argc, char *argv[])
-{ FILE  *input;
-  char  *root, *dpwd;
-  char  *las, *lpwd;
+{ char  *root, *dpwd;
   int64  novl;
-  int    c, COVERAGE;
+  int    c;
+
+  DAZZ_EXTRA ex_hgap, ex_covr;
+  DAZZ_EXTRA ex_cest, ex_qvs, ex_dif;
+
+  char *cest_name = "Coverage Estimate";
+  char *qvs_name  = "Histogram of QVs";
+  char *dif_name  = "Histogram of Tile Differences";
+  int64 cover64;
 
   //  Process arguments
 
@@ -407,7 +415,6 @@ int main(int argc, char *argv[])
     ARG_INIT("DASqv")
 
     COVERAGE = -1;
-    HGAP_MIN = 0;
 
     j = 1;
     for (i = 1; i < argc; i++)
@@ -419,9 +426,6 @@ int main(int argc, char *argv[])
           case 'c':
             ARG_POSITIVE(COVERAGE,"Voting depth")
             break;
-          case 'H':
-            ARG_POSITIVE(HGAP_MIN,"HGAP threshold (in bp.s)")
-            break;
         }
       else
         argv[j++] = argv[i];
@@ -431,24 +435,10 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
+        fprintf(stderr,"      -c: Use this as the average coverage (not DAScover estimate).\n");
         exit (1);
-      }
-
-    if (COVERAGE < 0)
-      { fprintf(stderr,"%s: Must supply -c parameter\n",Prog_Name);
-        exit (1);
-      }
-    else
-      { if (COVERAGE >= 40)
-          QV_DEEP = COVERAGE/8;
-        else if (COVERAGE >= 20)
-          QV_DEEP = 5;
-        else if (COVERAGE >= 4)
-          QV_DEEP = COVERAGE/4;
-        else
-          { fprintf(stderr,"%s: Average coverage is too low (< 4X), cannot infer qv's\n",Prog_Name);
-            exit (1);
-          }
       }
   }
 
@@ -470,174 +460,254 @@ int main(int argc, char *argv[])
     Trim_DB(DB);
   }
 
-  //  Initialize statistics gathering
+  //  Get .covr track information
 
-  if (VERBOSE)
-    { int i;
+  { FILE      *afile;
+    char      *aname;
+    int        extra, cmax;
+    int64     *cgram;
 
-      nreads = 0;
-      totlen = 0;
-      for (i = 0; i <= MAXQV; i++)
-        qgram[i] = sgram[i] = 0;
+    aname = Strdup(Catenate(DB->path,".","covr",".anno"),"Allocating anno file");
+    if (aname == NULL)
+      exit (1);
+    afile  = fopen(aname,"r");
+    if (afile == NULL)
+      { fprintf(stderr,"%s: Must have a 'covr' track, run DAScover\n",Prog_Name);
+        exit (1);
+      }
 
-      printf("\nDASqv -c%d %s",COVERAGE,argv[1]);
-      for (i = 2; i < argc; i++)
-        printf(" %s",argv[i]);
-      printf("\n");
-    }
+    fseeko(afile,0,SEEK_END);
+    extra = ftell(afile) - sizeof(int)*2;
+    fseeko(afile,-extra,SEEK_END);
+    ex_covr.nelem = 0;
+    if (Read_Extra(afile,aname,&ex_covr) != 0)
+      { fprintf(stderr,"%s: Histogram extra missing from .covr track?\n",Prog_Name);
+        exit (1);
+      }
+    ex_hgap.nelem = 0;
+    if (Read_Extra(afile,aname,&ex_hgap) != 0)
+      { fprintf(stderr,"%s: Hgap threshold extra missing from .covr track?\n",Prog_Name);
+        exit (1);
+      }
+    fclose(afile);
 
-  //  Determine if overlap block is being processed and if so get first and last read
-  //    from .db file
+    HGAP_MIN = (int) ((int64 *) (ex_hgap.value))[0];
+    cgram    = (int64 *) (ex_covr.value);
+    cmax     = ex_covr.nelem - 1;
+
+    if (COVERAGE < 0)
+      { int i;
+
+        i = 0;
+        while (cgram[i+1] < cgram[i])
+          i += 1;
+        for (COVERAGE = i++; i < cmax; i++)
+          if (cgram[COVERAGE] < cgram[i])
+            COVERAGE = i;
+      }
+
+    if (COVERAGE >= 40)
+      QV_DEEP = COVERAGE/8;
+     else if (COVERAGE >= 20)
+       QV_DEEP = 5;
+     else if (COVERAGE >= 4)
+       QV_DEEP = COVERAGE/4;
+     else
+       { fprintf(stderr,"%s: Average coverage is too low (< 4X), cannot infer qv's\n",Prog_Name);
+         exit (1);
+       }
+  }
+
+  //  Setup extras
+
+  ex_cest.vtype = DB_INT;      // Estimated coverage (same for every .las)
+  ex_cest.nelem = 1;
+  ex_cest.accum = DB_EXACT;
+  ex_cest.name  = cest_name;
+  cover64 = COVERAGE;
+  ex_cest.value = &cover64;
+
+  ex_qvs.vtype = DB_INT;      //  Histogram of MAXQV1 trace-point diff counts
+  ex_qvs.nelem = MAXQV1;
+  ex_qvs.accum = DB_SUM;
+  ex_qvs.name  = qvs_name;
+  ex_qvs.value = &qgram;
+
+  ex_dif.vtype = DB_INT;     //  Histogram of MAXQV1 intrinisic qv counts
+  ex_dif.nelem = MAXQV1;
+  ex_dif.accum = DB_SUM;
+  ex_dif.name  = dif_name;
+  ex_dif.value = &sgram;
+
+  //  For each .las file do
 
   dpwd = PathTo(argv[1]);
   root = Root(argv[1],".db");
 
   for (c = 2; c < argc; c++)
-    { las  = Root(argv[c],".las");
+    { Block_Looper *parse;
+      FILE         *input;
 
-      { FILE *dbfile;
-        char  buffer[2*MAX_NAME+100];
-        char *p, *eptr;
-        int   i, part, nfiles, nblocks, cutoff, all, oindx;
-        int64 size;
+      parse = Parse_Block_Arg(argv[c]);
 
-        DB_PART  = 0;
-        DB_FIRST = 0;
-        DB_LAST  = DB->nreads;
+      while ((input = Next_Block_Arg(parse)) != NULL)
+        { DB_PART  = 0;
+          DB_FIRST = 0;
+          DB_LAST  = DB->nreads;
 
-        p = rindex(las,'.');
-        if (p != NULL)
-          { part = strtol(p+1,&eptr,10);
-            if (*eptr == '\0' && eptr != p+1)
-              { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
-                if (dbfile == NULL)
-                  exit (1);
-                if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
-                  SYSTEM_READ_ERROR
-                for (i = 0; i < nfiles; i++)
-                  if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
-                  SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
-                  SYSTEM_READ_ERROR
-                for (i = 1; i <= part; i++)
-                  if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
-                    SYSTEM_READ_ERROR
-                if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
-                  SYSTEM_READ_ERROR
-                fclose(dbfile);
-                DB_PART = part;
-                *p = '\0';
+          //  Determine if overlap block is being processed and if so get first and last read
+          //    from .db file
+
+          { FILE *dbfile;
+            char  buffer[2*MAX_NAME+100];
+            char *p, *eptr;
+            int   i, part, nfiles, nblocks, cutoff, all, oindx;
+            int64 size;
+
+            p = rindex(Block_Arg_Root(parse),'.');
+            if (p != NULL)
+              { part = strtol(p+1,&eptr,10);
+                if (*eptr == '\0' && eptr != p+1)
+                  { dbfile = Fopen(Catenate(dpwd,"/",root,".db"),"r");
+                    if (dbfile == NULL)
+                      exit (1);
+                    if (fscanf(dbfile,DB_NFILE,&nfiles) != 1)
+                      SYSTEM_READ_ERROR
+                    for (i = 0; i < nfiles; i++)
+                      if (fgets(buffer,2*MAX_NAME+100,dbfile) == NULL)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_NBLOCK,&nblocks) != 1)
+                      SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_PARAMS,&size,&cutoff,&all) != 3)
+                      SYSTEM_READ_ERROR
+                    for (i = 1; i <= part; i++)
+                      if (fscanf(dbfile,DB_BDATA,&oindx,&DB_FIRST) != 2)
+                        SYSTEM_READ_ERROR
+                    if (fscanf(dbfile,DB_BDATA,&oindx,&DB_LAST) != 2)
+                      SYSTEM_READ_ERROR
+                    fclose(dbfile);
+                    DB_PART = part;
+                  }
               }
           }
-      }
 
-      //   Set up preliminary trimming track
+          //   Set up preliminary trimming track
 
-      if (DB_PART > 0)
-        { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,
-                                    Numbered_Suffix(".",DB_PART,".qual.anno")),"w");
-          QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,
-                                    Numbered_Suffix(".",DB_PART,".qual.data")),"w");
-        }
-      else
-        { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.anno"),"w");
-          QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.data"),"w");
-        }
-      if (QV_AFILE == NULL || QV_DFILE == NULL)
-        exit (1);
+          if (DB_PART > 0)
+            { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                        Numbered_Suffix(".",DB_PART,".qual.anno")),"w");
+              QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,
+                                        Numbered_Suffix(".",DB_PART,".qual.data")),"w");
+            }
+          else
+            { QV_AFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.anno"),"w");
+              QV_DFILE = Fopen(Catenate(dpwd,PATHSEP,root,".qual.data"),"w");
+            }
+          if (QV_AFILE == NULL || QV_DFILE == NULL)
+            exit (1);
 
-      { int size, length;
+          { int size, length;
 
-        length = DB_LAST - DB_FIRST;
-        size   = sizeof(int64);
-        fwrite(&length,sizeof(int),1,QV_AFILE);
-        fwrite(&size,sizeof(int),1,QV_AFILE);
-        QV_INDEX = 0;
-        fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
-      }
-
-      //  Open overlap file
-
-      lpwd = PathTo(argv[c]);
-      if (DB_PART > 0)
-        input = Fopen(Catenate(lpwd,"/",las,Numbered_Suffix(".",DB_PART,".las")),"r");
-      else
-        input = Fopen(Catenate(lpwd,"/",las,".las"),"r");
-      if (input == NULL)
-        exit (1);
-
-      free(lpwd);
-      free(las);
-
-      //  Get trace point spacing information
-
-      fread(&novl,sizeof(int64),1,input);
-      fread(&TRACE_SPACING,sizeof(int),1,input);
-
-      //  Process each read pile
-
-      make_a_pass(input,CALCULATE_QVS,1);
-
-      fwrite(&COVERAGE,sizeof(int),1,QV_AFILE);
-      fwrite(&HGAP_MIN,sizeof(int),1,QV_AFILE);
-
-      fclose(QV_AFILE);
-      fclose(QV_DFILE);
-    }
-
-  //  If verbose output statistics summary to stdout
-
-  if (VERBOSE)
-    { int   i;
-      int64 ssum, qsum;
-      int64 stotal, qtotal;
-      int   gval, bval;
-
-      printf("\nInput:  ");
-      Print_Number(nreads,7,stdout);
-      printf("reads,  ");
-      Print_Number(totlen,12,stdout);
-      printf(" bases");
-      if (HGAP_MIN > 0)
-        { printf(" (another ");
-          Print_Number((DB_LAST-DB_FIRST) - nreads,0,stdout);
-          printf(" were < H-length)");
-        }
-      printf("\n");
-
-      stotal = qtotal = 0;
-      for (i = 0; i <= MAXQV; i++)
-        { stotal += sgram[i];
-          qtotal += qgram[i];
-        }
-
-      printf("\nHistogram of q-values (average %d best)\n",2*QV_DEEP);
-      printf("\n                 Input                 QV\n");
-      qsum = qgram[MAXQV];
-      ssum = sgram[MAXQV];
-      printf("\n    %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n\n",
-             MAXQV,sgram[MAXQV],(100.*ssum)/stotal,qgram[MAXQV],(100.*qsum)/qtotal);
-
-      bval    = gval = -1;
-      qtotal -= qsum;
-      stotal -= ssum;
-      ssum = qsum = 0;
-      for (i = MAXQV-1; i >= 0; i--) 
-        if (qgram[i] > 0)
-          { ssum += sgram[i];
-            qsum += qgram[i];
-            printf("    %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n",
-                   i,sgram[i],(100.*ssum)/stotal,
-                     qgram[i],(100.*qsum)/qtotal);
-            if ((100.*qsum)/qtotal > 7. && bval < 0)
-              bval = i;
-            if ((100.*qsum)/qtotal > 20. && gval < 0)
-              gval = i;
+            length = DB_LAST - DB_FIRST;
+            size   = sizeof(int64);
+            fwrite(&length,sizeof(int),1,QV_AFILE);
+            fwrite(&size,sizeof(int),1,QV_AFILE);
+            QV_INDEX = 0;
+            fwrite(&QV_INDEX,sizeof(int64),1,QV_AFILE);
           }
 
-      printf("\n  Recommend \'DAStrim -g%d -b%d'\n\n",gval,bval);
+          //  Get trace point spacing information
+
+          fread(&novl,sizeof(int64),1,input);
+          fread(&TRACE_SPACING,sizeof(int),1,input);
+
+          //  Initialize statistics gathering
+
+          { int i;
+
+            nreads = 0;
+            totlen = 0;
+            for (i = 0; i <= MAXQV; i++)
+              qgram[i] = sgram[i] = 0;
+          }
+
+          if (VERBOSE)
+            { printf("\n\nDASqv");
+              if (HGAP_MIN > 0)
+                printf(" -H%d",HGAP_MIN);
+              printf(" -c%d %s %s\n\n",COVERAGE,argv[1],argv[c]);
+              fflush(stdout);
+            }
+
+          //  Process each read pile
+
+          make_a_pass(input,CALCULATE_QVS,1);
+
+          //  Write out extras and close .qual track
+
+          Write_Extra(QV_AFILE,&ex_hgap);
+          Write_Extra(QV_AFILE,&ex_cest);
+          Write_Extra(QV_AFILE,&ex_qvs);
+          Write_Extra(QV_AFILE,&ex_dif);
+
+          fclose(QV_AFILE);
+          fclose(QV_DFILE);
+
+          //  If verbose output statistics summary to stdout
+
+          if (VERBOSE)
+            { int   i;
+              int64 ssum, qsum;
+              int64 stotal, qtotal;
+              int   gval, bval;
+
+              printf("\n  Input:  ");
+              Print_Number(nreads,7,stdout);
+              printf("reads,  ");
+              Print_Number(totlen,12,stdout);
+              printf(" bases");
+              if (HGAP_MIN > 0)
+                { printf(" (another ");
+                  Print_Number((DB_LAST-DB_FIRST) - nreads,0,stdout);
+		  printf(" were < H-length)");
+		}
+	      printf("\n");
+
+	      stotal = qtotal = 0;
+	      for (i = 0; i <= MAXQV; i++)
+	        { stotal += sgram[i];
+                  qtotal += qgram[i];
+                }
+
+              printf("\n  Histogram of q-values (average %d best)\n",2*QV_DEEP);
+              printf("\n                   Input                 QV\n");
+              qsum = qgram[MAXQV];
+              ssum = sgram[MAXQV];
+              printf("\n      %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n\n",
+                     MAXQV,sgram[MAXQV],(100.*ssum)/stotal,qgram[MAXQV],(100.*qsum)/qtotal);
+
+              bval    = gval = -1;
+              qtotal -= qsum;
+              stotal -= ssum;
+              ssum = qsum = 0;
+              for (i = MAXQV-1; i >= 0; i--) 
+                if (qgram[i] > 0)
+                  { ssum += sgram[i];
+                    qsum += qgram[i];
+                    printf("      %2d:  %9lld  %5.1f%%    %9lld  %5.1f%%\n",
+                           i,sgram[i],(100.*ssum)/stotal,
+                             qgram[i],(100.*qsum)/qtotal);
+                    if ((100.*qsum)/qtotal > 7. && bval < 0)
+                      bval = i;
+                    if ((100.*qsum)/qtotal > 20. && gval < 0)
+                      gval = i;
+                  }
+
+              printf("\n    Recommend \'DAStrim -g%d -b%d'\n\n",gval,bval);
+            }
+        }
+
+      Free_Block_Arg(parse);
     }
 
   //  Clean up
@@ -649,4 +719,4 @@ int main(int argc, char *argv[])
   free(Prog_Name);
 
   exit (0);
-}
+    }

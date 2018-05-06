@@ -21,22 +21,6 @@
 
 static char *Usage = "<source:db> ...";
 
-//  Gap states
-
-#define LOWQ  0   //  Gap is spanned by many LAs and patchable
-#define SPAN  1   //  Gap has many paired LAs and patchable
-#define SPLIT 2   //  Gap is a chimer or an unpatchable gap
-#define ADPRE 3   //  Gap is due to adaptemer, trim prefix interval to left
-#define ADSUF 4   //  Gap is due to adaptemer, trim suffix interval to right
-
-
-//  Global Variables (must exist across the processing of each pile)
-
-static DAZZ_DB _DB, *DB  = &_DB;   //  Data base
-
-static int64  *TRIM_IDX;   //  trim track index
-static int    *TRIM;       //  trim track values
-
 int main(int argc, char *argv[])
 { int c;
 
@@ -52,267 +36,258 @@ int main(int argc, char *argv[])
   //  Open trimmed DB and .qual and .trim tracks
 
   for (c = 1; c < argc; c++)
-    { int         status;
-      char       *root;
-      int         i, a, tb, te;
-      int         alen;
-      DAZZ_TRACK *track;
-      int64       nreads, totlen;
-      int64       nelim, nelimbp;
-      int64       n5trm, n5trmbp;
-      int64       n3trm, n3trmbp;
-      int64       natrm, natrmbp;
-      int64       ngaps, ngapsbp;
-      int64       nlowq, nlowqbp;
-      int64       nspan, nspanbp;
-      int64       nchim, nchimbp;
-      int         rlog, blog;
-      int         BAD_QV, GOOD_QV, HGAP_MIN;
 
-      status = Open_DB(argv[c],DB);
-      if (status < 0)
-        exit (1);
-      if (status == 1)
-        { fprintf(stderr,"%s: Cannot be called on a .dam index: %s\n",Prog_Name,argv[1]);
+    { DAZZ_DB    _DB, *DB  = &_DB;
+      DAZZ_EXTRA ex_hgap, ex_cest, ex_good, ex_bad, ex_trim;
+
+      //  Load DB
+
+      { int status;
+
+        status = Open_DB(argv[c],DB);
+        if (status < 0)
           exit (1);
-        }
-      Trim_DB(DB);
-
-      track = Load_Track(DB,"trim");
-      if (track != NULL)
-        { FILE *afile;
-          int   size, tracklen, extra;
-
-          TRIM_IDX = (int64 *) track->anno;
-          TRIM     = (int *) track->data;
-          for (i = 0; i <= DB->nreads; i++)
-            TRIM_IDX[i] /= sizeof(int);
-
-          if (DB->part)
-            { afile = fopen(Catenate(DB->path,
-                                  Numbered_Suffix(".",DB->part,"."),"trim",".anno"),"r");
-              if (afile == NULL)
-                afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
-            }
-          else
-            afile = fopen(Catenate(DB->path,".","trim",".anno"),"r");
-          fread(&tracklen,sizeof(int),1,afile);
-          fread(&size,sizeof(int),1,afile);
-          fseeko(afile,0,SEEK_END);
-          extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
-          fseeko(afile,-extra,SEEK_END);
-          if (extra == 4*sizeof(int))
-            { fread(&GOOD_QV,sizeof(int),1,afile);
-              fread(&BAD_QV,sizeof(int),1,afile);
-              fread(&HGAP_MIN,sizeof(int),1,afile);
-              fread(&HGAP_MIN,sizeof(int),1,afile);
-            }
-          else if (extra == 3*sizeof(int) || extra == 2*sizeof(int))
-            { fread(&GOOD_QV,sizeof(int),1,afile);
-              fread(&BAD_QV,sizeof(int),1,afile);
-              HGAP_MIN = 0;
-            }
-          else
-            { GOOD_QV  = -1;
-              BAD_QV   = -1;
-              HGAP_MIN = 0;
-            }
-          fclose(afile);
-        }
-      else
-        { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);
-          exit (1);
-        }
-
-      root   = Root(argv[c],".db");
-      nreads = DB->nreads;
-      totlen = DB->totlen;
-
-      nelim   = 0;
-      n5trm   = 0;
-      n3trm   = 0;
-      natrm   = 0;
-      nelimbp = 0;
-      n5trmbp = 0;
-      n3trmbp = 0;
-      natrmbp = 0;
-
-      ngaps   = 0;
-      nlowq   = 0;
-      nspan   = 0;
-      nchim   = 0;
-      ngapsbp = 0;
-      nlowqbp = 0;
-      nspanbp = 0;
-      nchimbp = 0;
-
-      for (a = 0; a < DB->nreads; a++)
-        { tb = TRIM_IDX[a];
-          te = TRIM_IDX[a+1];
-          alen = DB->reads[a].rlen;
-          if (alen < HGAP_MIN)
-            { nreads -= 1;
-              totlen -= alen;
-            }
-          else if (tb >= te)
-            { nelim += 1;
-              nelimbp += alen;
-            }
-          else
-            { if (TRIM[tb] > 0)
-                { n5trm += 1;
-                  n5trmbp += TRIM[tb];
-                } 
-              if (TRIM[te-1] < alen)
-                { n3trm += 1;
-                  n3trmbp += alen - TRIM[te-1];
-                } 
-              while (tb + 3 < te)
-                { ngaps += 1;
-                  ngapsbp += TRIM[tb+3] - TRIM[tb+1];
-                  if (TRIM[tb+2] == LOWQ)
-                    { nlowq += 1;
-                      nlowqbp += TRIM[tb+3] - TRIM[tb+1];
-                    }
-                  else if (TRIM[tb+2] == SPAN)
-                    { nspan += 1;
-                      nspanbp += TRIM[tb+3] - TRIM[tb+1];
-                    }
-                  else if (TRIM[tb+2] == ADPRE)
-                    { natrm += 1;
-                      natrmbp += TRIM[tb+3] - TRIM[tb];
-                    }
-                  else if (TRIM[tb+2] == ADSUF)
-                    { natrm += 1;
-                      natrmbp += TRIM[tb+4] - TRIM[tb+1];
-                    }
-                  else
-                    { nchim += 1;
-                      nchimbp += TRIM[tb+3] - TRIM[tb+1];
-                    }
-                  tb += 3;
-                }
-            }
-        }
-
-      printf("\nStatistics for DAStrim");
-      if (GOOD_QV >= 0)
-        printf(" -g%d",GOOD_QV);
-      else
-        printf(" -g??");
-      if (BAD_QV >= 0)
-        printf(" -b%d",BAD_QV);
-      else
-        printf(" -b??");
-      if (HGAP_MIN > 0)
-        printf(" [-H%d]",HGAP_MIN);
-      printf(" %s\n\n",root);
-
-      { int64 mult;
-
-        rlog = 0;
-        mult = 1;
-        while (mult <= nreads || mult <= ngaps)
-          { mult *= 10;
-            rlog += 1;
+        if (status == 1)
+          { fprintf(stderr,"%s: Cannot be called on a .dam index: %s\n",Prog_Name,argv[1]);
+            exit (1);
           }
-        if (rlog <= 3)
-          rlog = 3;
-        else
-          rlog += (rlog-1)/3;
-  
-        blog = 0;
-        mult = 1;
-        while (mult <= totlen)
-          { mult *= 10;
-            blog += 1;
-          }
-        if (blog <= 3)
-          blog = 3;
-        else
-          blog += (blog-1)/3;
+        Trim_DB(DB);
       }
 
-      printf("  Input:    ");
-      Print_Number((int64) nreads,rlog,stdout);
-      printf(" (100.0%%) reads     ");
-      Print_Number(totlen,blog,stdout);
-      printf(" (100.0%%) bases");
-      if (HGAP_MIN > 0)
-        { printf(" (another ");
-          Print_Number((int64) (DB->nreads-nreads),0,stdout);
-          printf(" were < H-length)");
+      //  Get .trim track extras
+
+      { FILE *afile;
+        char *aname;
+        int   extra, tracklen, size;
+
+        afile = NULL;
+        if (DB->part)
+          { aname = Strdup(Catenate(DB->path,Numbered_Suffix(".",DB->part,"."),"trim",".anno"),
+                           "Allocating anno file");
+            if (aname == NULL)
+              exit (1);
+            afile  = fopen(aname,"r");
+            if (afile == NULL)
+              { fprintf(stderr,"%s: Must have a 'trim.%d' track, run DAStrim\n",Prog_Name,DB->part);
+                exit (1);
+              }
+          }
+        else
+          { aname = Strdup(Catenate(DB->path,".","trim",".anno"),"Allocating anno file");
+            if (aname == NULL)
+              exit (1);
+            afile = fopen(aname,"r");
+            if (afile == NULL)
+              { fprintf(stderr,"%s: Must have a 'trim' track, run DAStrim\n",Prog_Name);
+                exit (1);
+              }
+          }
+
+        fread(&tracklen,sizeof(int),1,afile);
+        fread(&size,sizeof(int),1,afile);
+        fseeko(afile,0,SEEK_END);
+        extra = ftell(afile) - (size*(tracklen+1) + 2*sizeof(int));
+        fseeko(afile,-extra,SEEK_END);
+        ex_hgap.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_hgap) != 0)
+          { fprintf(stderr,"%s: Hgap threshold extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        ex_cest.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_cest) != 0)
+          { fprintf(stderr,"%s: Coverage estimate extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        ex_good.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_good) != 0)
+          { fprintf(stderr,"%s: Good QV threshold extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        ex_bad.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_bad) != 0)
+          { fprintf(stderr,"%s: Bad QV threshdold extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        ex_trim.nelem = 0;
+        if (Read_Extra(afile,aname,&ex_trim) != 0)
+          { fprintf(stderr,"%s: Trimming statistics extra missing from .trim track?\n",Prog_Name);
+            exit (1);
+          }
+        fclose(afile);
+      }
+
+      //  Generate Display
+
+      { char       *root;
+        int64       nreads, totlen;
+        int64       nelim, nelimbp;
+        int64       n5trm, n5trmbp;
+        int64       n3trm, n3trmbp;
+        int64       natrm, natrmbp;
+        int64       ngaps, ngapsbp;
+        int64       nlowq, nlowqbp;
+        int64       nspan, nspanbp;
+        int64       nchim, nchimbp;
+        int         rlog, blog;
+        int         cover, hgap_min;
+        int         bad_qv, good_qv;
+        int64      *tstats;
+
+        //  Get relevant variables
+
+        root   = Root(argv[c],".db");
+        nreads = DB->nreads;
+        totlen = DB->totlen;
+
+        hgap_min = (int) ((int64 *) (ex_hgap.value))[0];
+        cover    = (int) ((int64 *) (ex_cest.value))[0];
+        good_qv  = (int) ((int64 *) (ex_good.value))[0];
+        bad_qv   = (int) ((int64 *) (ex_bad.value))[0];
+        tstats   = (int64 *) (ex_trim.value);
+
+        nelim   = tstats[0];
+        n5trm   = tstats[1];
+        n3trm   = tstats[2];
+        natrm   = tstats[3];
+        nelimbp = tstats[4];
+        n5trmbp = tstats[5];
+        n3trmbp = tstats[6];
+        natrmbp = tstats[7];
+
+        ngaps   = tstats[8];
+        nlowq   = tstats[9];
+        nspan   = tstats[10];
+        nchim   = tstats[11];
+        ngapsbp = tstats[12];
+        nlowqbp = tstats[13];
+        nspanbp = tstats[14];
+        nchimbp = tstats[15];
+
+        printf("\nDAStrim");
+        if (hgap_min > 0)
+          printf(" [-H%d]",hgap_min);
+        printf(" -c%d -g%d -b%d %s\n\n",cover,good_qv,bad_qv,root);
+
+        //  Compensate for HGAP
+
+        if (hgap_min > 0)
+          { int i;
+
+            for (i = 0; i < DB->nreads; i++)
+              if (DB->reads[i].rlen < hgap_min)
+                { nreads -= 1;
+                  totlen -= DB->reads[i].rlen;
+                }
+          }
+
+        //  Compute maximum field widths of statistics
+
+        { int64 mult;
+
+          rlog = 0;
+          mult = 1;
+          while (mult <= nreads || mult <= ngaps)
+            { mult *= 10;
+              rlog += 1;
+            }
+          if (rlog <= 3)
+            rlog = 3;
+          else
+            rlog += (rlog-1)/3;
+  
+          blog = 0;
+          mult = 1;
+          while (mult <= totlen)
+            { mult *= 10;
+              blog += 1;
+            }
+          if (blog <= 3)
+            blog = 3;
+          else
+            blog += (blog-1)/3;
         }
-      printf("\n");
 
-      printf("  Trimmed:  ");
-      Print_Number(nelim,rlog,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*nelim)/nreads);
-      Print_Number(nelimbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*nelimbp)/totlen);
+        //  Display the statistices
 
-      printf("  5' trim:  ");
-      Print_Number(n5trm,rlog,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*n5trm)/nreads);
-      Print_Number(n5trmbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*n5trmbp)/totlen);
+        printf("  Input:    ");
+        Print_Number((int64) nreads,rlog,stdout);
+        printf(" (100.0%%) reads     ");
+        Print_Number(totlen,blog,stdout);
+        printf(" (100.0%%) bases");
+        if (hgap_min > 0)
+          { printf(" (another ");
+            Print_Number((int64) (DB->nreads-nreads),0,stdout);
+            printf(" were < H-length)");
+          }
+        printf("\n");
 
-      printf("  3' trim:  ");
-      Print_Number(n3trm,rlog,stdout);
-      printf(" (%5.1f%%) reads     ",(100.*n3trm)/nreads);
-      Print_Number(n3trmbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*n3trmbp)/totlen);
+        printf("  Trimmed:  ");
+        Print_Number(nelim,rlog,stdout);
+        printf(" (%5.1f%%) reads     ",(100.*nelim)/nreads);
+        Print_Number(nelimbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*nelimbp)/totlen);
 
-      if (natrm > 0)
-        { printf("  Adapter:  ");
-          Print_Number(natrm,rlog,stdout);
-          printf(" (%5.1f%%) reads     ",(100.*natrm)/nreads);
-          Print_Number(natrmbp,blog,stdout);
-          printf(" (%5.1f%%) bases\n",(100.*natrmbp)/totlen);
-        }
+        printf("  5' trim:  ");
+        Print_Number(n5trm,rlog,stdout);
+        printf(" (%5.1f%%) reads     ",(100.*n5trm)/nreads);
+        Print_Number(n5trmbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*n5trmbp)/totlen);
 
-      printf("\n");
+        printf("  3' trim:  ");
+        Print_Number(n3trm,rlog,stdout);
+        printf(" (%5.1f%%) reads     ",(100.*n3trm)/nreads);
+        Print_Number(n3trmbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*n3trmbp)/totlen);
 
-      printf("  Gaps:     ");
-      Print_Number(ngaps,rlog,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(ngaps))/nreads);
-      Print_Number(ngapsbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(ngapsbp))/totlen);
+        printf("  Adapter:  ");
+        Print_Number(natrm,rlog,stdout);
+        printf(" (%5.1f%%) reads     ",(100.*natrm)/nreads);
+        Print_Number(natrmbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*natrmbp)/totlen);
 
-      printf("    Low QV: ");
-      Print_Number(nlowq,rlog,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nlowq))/nreads);
-      Print_Number(nlowqbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nlowqbp))/totlen);
+        printf("\n");
 
-      printf("    Span'd: ");
-      Print_Number(nspan,rlog,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nspan))/nreads);
-      Print_Number(nspanbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nspanbp))/totlen);
+        printf("  Gaps:     ");
+        Print_Number(ngaps,rlog,stdout);
+        printf(" (%5.1f%%) gaps      ",(100.*(ngaps))/nreads);
+        Print_Number(ngapsbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(ngapsbp))/totlen);
 
-      printf("    Break:  ");
-      Print_Number(nchim,rlog,stdout);
-      printf(" (%5.1f%%) gaps      ",(100.*(nchim))/nreads);
-      Print_Number(nchimbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nchimbp))/totlen);
+        printf("    Low QV: ");
+        Print_Number(nlowq,rlog,stdout);
+        printf(" (%5.1f%%) gaps      ",(100.*(nlowq))/nreads);
+        Print_Number(nlowqbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(nlowqbp))/totlen);
 
-      printf("\n");
+        printf("    Span'd: ");
+        Print_Number(nspan,rlog,stdout);
+        printf(" (%5.1f%%) gaps      ",(100.*(nspan))/nreads);
+        Print_Number(nspanbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(nspanbp))/totlen);
 
-      printf("  Clipped:  ");
-      Print_Number(n5trm+n3trm+nelim+nchim,rlog,stdout);
-      printf(" clips              ");
-      Print_Number(n5trmbp+n3trmbp+nelimbp+nchimbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(n5trmbp+n3trmbp+nelimbp+nchimbp))/totlen);
+        printf("    Break:  ");
+        Print_Number(nchim,rlog,stdout);
+        printf(" (%5.1f%%) gaps      ",(100.*(nchim))/nreads);
+        Print_Number(nchimbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(nchimbp))/totlen);
 
-      printf("  Patched:  ");
-      Print_Number(nlowq+nspan,rlog,stdout);
-      printf(" patches            ");
-      Print_Number(nlowqbp+nspanbp,blog,stdout);
-      printf(" (%5.1f%%) bases\n",(100.*(nlowqbp+nspanbp))/totlen);
+        printf("\n");
 
-      free(root);
-      Close_DB(DB);
+        printf("  Clipped:  ");
+        Print_Number(n5trm+n3trm+nelim+nchim,rlog,stdout);
+        printf(" clips              ");
+        Print_Number(n5trmbp+n3trmbp+nelimbp+nchimbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(n5trmbp+n3trmbp+nelimbp+nchimbp))/totlen);
+
+        printf("  Patched:  ");
+        Print_Number(nlowq+nspan,rlog,stdout);
+        printf(" patches            ");
+        Print_Number(nlowqbp+nspanbp,blog,stdout);
+        printf(" (%5.1f%%) bases\n",(100.*(nlowqbp+nspanbp))/totlen);
+
+        free(root);
+        Close_DB(DB);
+      }
     }
 
   free(Prog_Name);

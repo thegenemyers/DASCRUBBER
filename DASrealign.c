@@ -1011,6 +1011,9 @@ int main(int argc, char *argv[])
 
     if (argc != 5)
       { fprintf(stderr,"Usage: %s %s\n",Prog_Name,Usage);
+        fprintf(stderr,"\n");
+        fprintf(stderr,"      -v: Verbose mode, output statistics as proceed.\n");
+        fprintf(stderr,"      -l: minimum length alignment length.\n");
         exit (1);
       }
   }
