@@ -71,7 +71,7 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
   static int   *maskd;
 
   int  alen, atick;
-  int  bread, cread;
+  int  bread, cssr;
   int  t2, t1;
   int  i, j, a, e;
 
@@ -114,25 +114,27 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
 
   for (i = 0; i < novl; i = j)
     { bread = ovls[i].bread;
+
+      for (j = bread+1; j < DB_LAST; j++)
+        if ((Reads[j].flags & DB_CSS) == 0)
+          break;
+      cssr = j;
+
       for (j = i; j < novl; j++)
-        { cread = ovls[j].bread;
-          if (cread != bread && (Reads[cread].flags & DB_CSS) == 0)
-            break;
-          e = (ovls[j].path.aepos + t2) / TRACE_SPACING;
-          for (a = (ovls[j].path.abpos + t1) / TRACE_SPACING; a < e; a++)
-            local[a] = 1;
-        }
+        if (ovls[j].bread < cssr)
+          { e = (ovls[j].path.aepos + t2) / TRACE_SPACING;
+            for (a = (ovls[j].path.abpos + t1) / TRACE_SPACING; a < e; a++)
+              local[a] = 1;
+          }
       for (j = i; j < novl; j++)
-        { cread = ovls[j].bread;
-          if (cread != bread && (Reads[cread].flags & DB_CSS) == 0)
-            break;
-          e = (ovls[j].path.aepos + t2) / TRACE_SPACING;
-          for (a = (ovls[j].path.abpos + t1) / TRACE_SPACING; a < e; a++)
-            if (local[a] > 0)
-              { local[a] = 0;
-                cover[a] += 1;
-              }
-        }
+        if (ovls[j].bread < cssr)
+          { e = (ovls[j].path.aepos + t2) / TRACE_SPACING;
+            for (a = (ovls[j].path.abpos + t1) / TRACE_SPACING; a < e; a++)
+              if (local[a] > 0)
+                { local[a] = 0;
+                  cover[a] += 1;
+                }
+          }
     }
 
   for (i = 0; i < NUM_MASK; i++)
@@ -540,7 +542,6 @@ int main(int argc, char *argv[])
           if (VERBOSE)
             { int   i, cover;
               int64 ssum, stotal;
-int64 acov;
 
               printf("\nInput:  ");
               Print_Number(nreads,7,stdout);
@@ -565,15 +566,12 @@ int64 acov;
                        MAX_COVER,Cov_Hist[MAX_COVER],(100.*ssum)/stotal);
               stotal -= ssum;
               ssum    = 0;
-acov = 0;
               for (i = MAX_COVER-1; i >= 0; i--) 
                 if (Cov_Hist[i] > 0)
                   { ssum += Cov_Hist[i];
                     printf("    %4d:  %9lld  %5.1f%%\n",
                            i,Cov_Hist[i],(100.*ssum)/stotal);
-acov += i*Cov_Hist[i];
                   }
-printf("  Average non-zero cover = %lld\n",acov/(stotal-Cov_Hist[0]));
 
               i = 0;
               while (Cov_Hist[i+1] < Cov_Hist[i])
