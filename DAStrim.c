@@ -2621,6 +2621,8 @@ int main(int argc, char *argv[])
           fclose(KP_DFILE);
 #endif
 
+          fclose(input);
+
           //  If verbose output statistics summary to stdout
 
           if (VERBOSE)

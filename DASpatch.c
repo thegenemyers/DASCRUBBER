@@ -855,6 +855,7 @@ int main(int argc, char *argv[])
     
           fclose(PR_AFILE);
           fclose(PR_DFILE);
+          fclose(input);
         }
 
       Free_Block_Arg(parse);

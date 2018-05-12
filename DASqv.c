@@ -652,6 +652,7 @@ int main(int argc, char *argv[])
 
           fclose(QV_AFILE);
           fclose(QV_DFILE);
+          fclose(input);
 
           //  If verbose output statistics summary to stdout
 
