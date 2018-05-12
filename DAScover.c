@@ -126,6 +126,9 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
             for (a = (ovls[j].path.abpos + t1) / TRACE_SPACING; a < e; a++)
               local[a] = 1;
           }
+        else
+          break;
+
       for (j = i; j < novl; j++)
         if (ovls[j].bread < cssr)
           { e = (ovls[j].path.aepos + t2) / TRACE_SPACING;
@@ -135,6 +138,8 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
                   cover[a] += 1;
                 }
           }
+        else
+          break;
     }
 
   for (i = 0; i < NUM_MASK; i++)
@@ -590,6 +595,7 @@ int main(int argc, char *argv[])
 
           fclose(CV_AFILE);
           free(CV_ANAME);
+          fclose(input);
         }
 
       Free_Block_Arg(parse);
