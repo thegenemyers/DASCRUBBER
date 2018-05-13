@@ -204,9 +204,8 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
        }
 #endif
 
-      if (VERBOSE)
-        for (v = 0; v <= MAXQV; v++)
-          sgram[v] += tick[v] + cick[v];
+      for (v = 0; v <= MAXQV; v++)
+        sgram[v] += tick[v] + cick[v];
      
       cntn = sumn = 0;
       for (v = 0; v <= MAXQV; v++)
@@ -261,14 +260,12 @@ static void CALCULATE_QVS(int aread, Overlap *ovls, int novl)
 #endif
     }
 
-  //  Accumulate qv histogram (if VERBOSE) and append qv's to .qual file
+  //  Accumulate qv histogram and append qv's to .qual file
 
-  if (VERBOSE)
-    { for (i = 0; i < atick; i++)
-        qgram[qvec[i]] += 1;
-      nreads += 1;
-      totlen += alen;
-    }
+  for (i = 0; i < atick; i++)
+    qgram[qvec[i]] += 1;
+  nreads += 1;
+  totlen += alen;
 
   fwrite(qvec,sizeof(uint8),atick,QV_DFILE);
   QV_INDEX += atick;
@@ -720,4 +717,4 @@ int main(int argc, char *argv[])
   free(Prog_Name);
 
   exit (0);
-    }
+}

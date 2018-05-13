@@ -1964,10 +1964,8 @@ static void GAPS(int aread, Overlap *ovls, int novl)
       return;
     }
 
-  if (VERBOSE)
-    { nreads += 1;
-      totlen += alen;
-    }
+  nreads += 1;
+  totlen += alen;
 
   //  Partition into HQ-blocks
 
@@ -1986,10 +1984,8 @@ static void GAPS(int aread, Overlap *ovls, int novl)
   //  No blocks? ==> nothing to do
 
   if (nblk <= 0)
-    { if (VERBOSE)
-        { nelim += 1;
-          nelimbp += alen;
-        }
+    { nelim += 1;
+      nelimbp += alen;
 #ifdef ANNOTATE
       fwrite(&HQ_INDEX,sizeof(int64),1,HQ_AFILE);
       fwrite(&SN_INDEX,sizeof(int64),1,SN_AFILE);
@@ -2078,38 +2074,36 @@ static void GAPS(int aread, Overlap *ovls, int novl)
 
   //  Accummulate statistics
 
-    if (VERBOSE)
-      { if (block[0].beg > 0)
-          { n5trm += 1;
-            n5trmbp += block[0].beg;
+    if (block[0].beg > 0)
+      { n5trm += 1;
+        n5trmbp += block[0].beg;
+      }
+    if (block[nblk-1].end < alen)
+      { n3trm += 1;
+        n3trmbp += alen - block[nblk-1].end;
+      }
+    if (abeg > 0)
+      { natrm   += 1;
+        natrmbp += block[abeg].beg - block[0].beg;
+      }
+    if (aend < nblk)
+      { natrm   += 1;
+        natrmbp += (block[nblk-1].end - block[aend-1].end);
+      }
+    for (i = abeg+1; i < aend; i++)
+      { ngaps += 1;
+        ngapsbp += block[i].beg - block[i-1].end;
+        if (status[i] == LOWQ)
+          { nlowq   += 1;
+            nlowqbp += block[i].beg - block[i-1].end;
           }
-        if (block[nblk-1].end < alen)
-          { n3trm += 1;
-            n3trmbp += alen - block[nblk-1].end;
+        else if (status[i] == SPAN)
+          { nspan   += 1;
+            nspanbp += block[i].beg - block[i-1].end;
           }
-        if (abeg > 0)
-          { natrm   += 1;
-            natrmbp += block[abeg].beg - block[0].beg;
-          }
-        if (aend < nblk)
-          { natrm   += 1;
-            natrmbp += (block[nblk-1].end - block[aend-1].end);
-          }
-        for (i = abeg+1; i < aend; i++)
-          { ngaps += 1;
-            ngapsbp += block[i].beg - block[i-1].end;
-            if (status[i] == LOWQ)
-              { nlowq   += 1;
-                nlowqbp += block[i].beg - block[i-1].end;
-              }
-            else if (status[i] == SPAN)
-              { nspan   += 1;
-                nspanbp += block[i].beg - block[i-1].end;
-              }
-            else // status[i] == SPLIT
-              { nchim   += 1;
-                nchimbp += block[i].beg - block[i-1].end;
-              }
+        else // status[i] == SPLIT
+          { nchim   += 1;
+            nchimbp += block[i].beg - block[i-1].end;
           }
       }
 
@@ -2436,7 +2430,7 @@ int main(int argc, char *argv[])
   ex_bad.nelem = 1;
   ex_bad.accum = DB_EXACT;
   ex_bad.name  = bad_name;
-  bad64 = GOOD_QV;
+  bad64 = BAD_QV;
   ex_bad.value = &bad64;
 
   ex_trim.vtype = DB_INT;     // Trim statistics
