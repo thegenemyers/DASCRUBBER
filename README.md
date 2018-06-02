@@ -59,6 +59,13 @@ It places this histogram in a .covr track for the bock and these block tracks ar
 later with Catrack.  If the -v option is set, the histogram for each block is displayed and an
 estimate of the coverage of the underlying target genome is output.
 
+The -H option is for HGAP-based assembly (see the -H
+option of daligner) wherein only reads longer than the -H parameter are considered for overlap,
+scrubbing, and assembly.  With this option set, DASqv and all subsequent commands in the
+scrubbing pipeline, only perform their functions on reads of length -H or more.  All other
+reads are used in the overlap piles for H-reads to help assess and scrub the H-reads, but
+are themselves not scrubbed.
+
 If the overlap file contains a block number
 then the track files also contain a block number, e\.g\. \"DAScovr DB OVL.2\" will result in
 the track files DB.2.covr.[anno,data].  Furthermore, if DAScovr is run on .las blocks, then
@@ -77,21 +84,20 @@ Note carefully that \<source\> must always refer to the entire DB, only the \<ov
 involve a block number.
 
 Using the local alignment-pile for each A-read, DASqv produces a QV value for each complete
-segment of TRACE_SPACING bases (e\.g\. 100bp, the -s parameter to daligner). The quality value
-of ecah trace tile is the average of the best 25-50% of the estimated coverage alignment matches,
+trace point panel/tile of TRACE_SPACING bases (e\.g\. 100bp, the -s parameter to daligner). The
+quality value
+of each trace tile is the average of the best 25-50% of the estimated coverage alignment matches,
 where the estimated coverage is computed from the histogram of the .covr track.
 If one supplies the -c parameter, than this value explicitly overrides the estimated coverage
 produced by default.  All quality values over 50 are clipped to 50.
 
-The -v option prints out a histogram of the segment align matches, and the quality values
-produced.  This histogram is useful in assessing, for a given data set, what constitutes the
+The -v option prints out a histogram of the tile alignnment differences, and another of the
+quality values
+produced.  This later histogram is useful in assessing, for a given data set, what constitutes the
 threshold -g and -b, to be used by down stream commands, for what is definitely a good segment
-and what is definitely a bad segment.  The -H option is for HGAP-based assembly (see the -H
-option of daligner) wherein only reads longer than the -H parameter are considered for overlap,
-scrubbing, and assembly.  With this option set, DASqv and all subsequent commands in the
-scrubbing pipeline, only perform their functions on reads of length -H or more.  All other
-reads are used in the overlap piles for H-reads to help assess and scrub the H-reads, but
-are themselves not scrubbed.
+and what is definitely a bad segment.  By default, the system will choose for -g the QV value
+for which 80% or more of the QVs are lower than this value, and for -b, the QV value for which
+7% or more of the QVs are higher than this value.
 
 The quality values are written to a .qual track, that can be viewed by calling DBdump with
 the -i option set (\"i\" for \"intrinsic QV\").
