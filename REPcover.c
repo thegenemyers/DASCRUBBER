@@ -131,7 +131,7 @@ int main(int argc, char *argv[])
 
         printf("\nInput:  ");
         Print_Number(nreads,7,stdout);
-        printf("reads,  ");
+        printf(" reads,  ");
         Print_Number(totlen,12,stdout);
         printf(" bases");
         if (hgap_min > 0)

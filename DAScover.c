@@ -70,8 +70,10 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
   static int   *cover;
   static int   *maskd;
 
+  int  DBreads;
   int  alen, atick;
   int  bread, cssr;
+  int  alow, ahigh;
   int  t2, t1;
   int  i, j, a, e;
 
@@ -112,10 +114,25 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
   t2 = TRACE_SPACING/2;
   t1 = t2-1;
 
+  DBreads = DB->nreads;
+  for (j = aread+1; j < DBreads; j++)
+    if ((Reads[j].flags & DB_CSS) == 0)
+      break;
+  ahigh = j;
+  for (j = aread; j >= 0; j--)
+    if ((Reads[j].flags & DB_CSS) == 0)
+      break;
+  alow = j;
+
   for (i = 0; i < novl; i = j)
     { bread = ovls[i].bread;
 
-      for (j = bread+1; j < DB_LAST; j++)
+      if (alow <= bread && bread < ahigh)
+        { j += 1;
+          continue;
+        }
+
+      for (j = bread+1; j < DBreads; j++)
         if ((Reads[j].flags & DB_CSS) == 0)
           break;
       cssr = j;
@@ -167,6 +184,11 @@ static void HISTOGRAM_COVER(int aread, Overlap *ovls, int novl)
   printf("Mask: ");
   for (a = 0; a < atick; a++)
     printf("%d",maskd[a]);
+  printf("\n");
+
+  printf("Cover: ");
+  for (a = 0; a < atick; a++)
+    printf(" %d",cover[a]);
   printf("\n");
 #endif
 
@@ -550,7 +572,7 @@ int main(int argc, char *argv[])
 
               printf("\nInput:  ");
               Print_Number(nreads,7,stdout);
-              printf("reads,  ");
+              printf(" reads,  ");
               Print_Number(totlen,12,stdout);
               printf(" bases");
               if (HGAP_MIN > 0)
