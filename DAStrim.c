@@ -375,7 +375,7 @@ static Wall *find_walls(int novl, Event *queue, int *anum, int *dnum)
 
   if (novl > nmax)
     { nmax = novl*1.2 + 1000; 
-      wall = (Wall *) Realloc(wall,sizeof(Wall)*(nmax/MIN_PNT),"Reallocating wall vector");
+      wall = (Wall *) Realloc(wall,sizeof(Wall)*2*(nmax/MIN_PNT),"Reallocating wall vector");
       adds = (int *)  Realloc(adds,sizeof(int)*2*nmax,"Reallocating add+del vectors");
       if (wall == NULL || adds == NULL)
         exit (1);
@@ -1044,17 +1044,6 @@ static int GSORT(const void *l, const void *r)
   return (x->delta - y->delta);
 }
 
-#ifdef DEBUG_GAP_STATUS
-
-static int ASORT(const void *l, const void *r)
-{ int *x = (int *) l;
-  int *y = (int *) r;
-
-  return (*x - *y);
-}
-
-#endif
-
 //  Return match score of lov->bread with "anchor" lov->aread[lft-TRACE_SPACING,lft]
 
 static int eval_lft_anchor(int lft, Overlap *lov)
@@ -1199,7 +1188,10 @@ static int analyze_gap_pairs(int gsize, Spanner *gsort, Overlap *ovls,
   if (move)
     printf("  Gsort: %d\n",gsize);
 #endif
-  c = gsize - gsort[0].delta;
+  if (gcnt > 0)
+    c = gsize - gsort[0].delta;
+  else
+    c = gsize;
   w = 0;
   for (j = 0; j <= gcnt; j++)
     { l = c;
@@ -1591,7 +1583,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
       if (acnt >= .3*ccnt && gcnt < acnt) 
         {
 #ifdef DEBUG_GAP_STATUS
-          printf("    ADAPT %3d\n",std);
+          printf("    ADAPT %3d (vs %d)\n",acnt,gcnt);
 #endif
           return (ADAPT);
         }

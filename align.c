@@ -4327,6 +4327,7 @@ int Compute_Alignment(Alignment *align, Work_Data *ework, int task, int tspace)
   aseq = align->aseq+path->abpos;
   bseq = align->bseq+path->bbpos;
 
+  L = 0;
   if (task != DIFF_ONLY)
     { if (task == DIFF_TRACE || task == PLUS_TRACE)
         L = 2*(((path->aepos + (tspace-1))/tspace - path->abpos/tspace) + 1)*sizeof(uint16);
