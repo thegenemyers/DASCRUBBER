@@ -837,7 +837,7 @@ int main(int argc, char *argv[])
           if (VERBOSE)
             { npatch = 0;
               fpatch = 0;
-              printf("\nDASpatch -g%d -b%d %s %s\n",GOOD_QV,BAD_QV,argv[1],argv[c]);
+              printf("\nDASpatch -g%d -b%d %s %s\n",GOOD_QV,BAD_QV,argv[1],Block_Arg_Root(parse));
             }
 
           //  Process each read pile

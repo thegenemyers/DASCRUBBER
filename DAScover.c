@@ -551,7 +551,7 @@ int main(int argc, char *argv[])
           if (VERBOSE)
             { nreads = 0;
               totlen = 0;
-              printf("\nDAScover %s %s\n",argv[1],argv[c]);
+              printf("\nDAScover %s %s\n",argv[1],Block_Arg_Root(parse));
             }
 
           { int i;

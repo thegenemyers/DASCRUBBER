@@ -1351,6 +1351,7 @@ static int gap_status(Overlap *ovls, int novl, Interval *lblock, Interval *rbloc
     //  Find LA pairs or LAs spanning the gap flank [lcv,rcv]
 
     bread = -1;
+    lidx = ridx = -1;
     lcnt = rcnt = scnt = gcnt = acnt = 0;
     for (j = 0; j < novl; j = k)
       { blast = bread;
@@ -2552,7 +2553,8 @@ int main(int argc, char *argv[])
             { printf("\nDAStrim");
               if (HGAP_MIN  > 0)
                 printf(" -H%d",HGAP_MIN);
-              printf(" -c%d -g%d -b%d %s %s\n",COVERAGE,GOOD_QV,BAD_QV,argv[1],argv[c]);
+              printf(" -c%d -g%d -b%d %s %s\n",
+                     COVERAGE,GOOD_QV,BAD_QV,argv[1],Block_Arg_Root(parse));
             }
 
           //  Process each read pile

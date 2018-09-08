@@ -632,7 +632,7 @@ int main(int argc, char *argv[])
             { printf("\n\nDASqv");
               if (HGAP_MIN > 0)
                 printf(" -H%d",HGAP_MIN);
-              printf(" -c%d %s %s\n\n",COVERAGE,argv[1],argv[c]);
+              printf(" -c%d %s %s\n\n",COVERAGE,argv[1],Block_Arg_Root(parse));
               fflush(stdout);
             }
 
