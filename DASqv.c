@@ -545,7 +545,7 @@ int main(int argc, char *argv[])
     { Block_Looper *parse;
       FILE         *input;
 
-      parse = Parse_Block_Arg(argv[c]);
+      parse = Parse_Block_LAS_Arg(argv[c]);
 
       while ((input = Next_Block_Arg(parse)) != NULL)
         { DB_PART  = 0;

@@ -137,7 +137,8 @@ int main(int argc, char *argv[])
       { fprintf(stderr,"%s: Warning: 'map' track not sync'd with db.\n",Prog_Name);
         exit (1);
       }
-    map = Load_Track(db,"map");
+    map = Open_Track(db,"map");
+    Load_All_Track_Data(map);
   }
 
   //  Process read index arguments into a list of read ranges

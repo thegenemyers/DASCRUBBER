@@ -683,9 +683,10 @@ int main(int argc, char *argv[])
       }
     Trim_DB(DB);
 
-    track = Load_Track(DB,"qual");
+    track = Open_Track(DB,"qual");
     if (track != NULL)
-      { QV_IDX = (int64 *) track->anno;
+      { Load_All_Track_Data(track);
+        QV_IDX = (int64 *) track->anno;
         QV     = (uint8 *) track->data;
       }
     else
@@ -693,12 +694,14 @@ int main(int argc, char *argv[])
         exit (1);
       }
 
-    track = Load_Track(DB,"trim");
+    track = Open_Track(DB,"trim");
     if (track != NULL)
       { FILE *afile;
         char *aname;
         int   extra, tracklen, size;
         DAZZ_EXTRA  ex_hgap, ex_cest, ex_good, ex_bad;
+
+        Load_All_Track_Data(track);
 
         TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
@@ -758,7 +761,7 @@ int main(int argc, char *argv[])
     { Block_Looper *parse;
       FILE         *input;
 
-      parse = Parse_Block_Arg(argv[c]);
+      parse = Parse_Block_LAS_Arg(argv[c]);
 
       while ((input = Next_Block_Arg(parse)) != NULL)
         { DB_PART  = 0;

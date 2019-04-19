@@ -445,7 +445,8 @@ int main(int argc, char *argv[])
             break;
         }
 
-        track = Load_Track(DB,MASKS[i].name);
+        track = Open_Track(DB,MASKS[i].name);
+        Load_All_Track_Data(track);
 
         anno = (int64 *) (track->anno);
         for (j = 0; j <= DB->nreads; j++)
@@ -482,7 +483,7 @@ int main(int argc, char *argv[])
     { Block_Looper *parse;
       FILE         *input;
 
-      parse = Parse_Block_Arg(argv[c]);
+      parse = Parse_Block_LAS_Arg(argv[c]);
 
       while ((input = Next_Block_Arg(parse)) != NULL)
         { DB_PART  = 0;

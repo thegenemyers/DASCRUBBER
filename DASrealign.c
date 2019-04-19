@@ -1033,7 +1033,7 @@ int main(int argc, char *argv[])
       }
     Trim_DB(ADB);
 
-    Read_All_Sequences(ADB,0);
+    Load_All_Reads(ADB,0);
   }
 
   if (strcmp(argv[1],argv[2]) == 0)
@@ -1054,14 +1054,16 @@ int main(int argc, char *argv[])
         }
       Trim_DB(BDB);
 
-      Read_All_Sequences(BDB,0);
+      Load_All_Reads(BDB,0);
     }
   AFIRST = ADB->tfirst;
   BFIRST = BDB->tfirst;
 
-  map1 = Load_Track(ADB,"map");
+  map1 = Open_Track(ADB,"map");
   if (map1 != NULL)
     { int i, o, q, n; 
+
+      Load_All_Track_Data(map1);
  
       AMAP_IDX = (int64 *) map1->anno;
       AMAP     = (int *) map1->data;
@@ -1095,9 +1097,11 @@ int main(int argc, char *argv[])
       IBMAP = IAMAP;
     }
   else
-    { map2 = Load_Track(BDB,"map");
+    { map2 = Open_Track(BDB,"map");
       if (map2 != NULL)
         { int i, o, q, n; 
+
+          Load_All_Track_Data(map2);
      
           BMAP_IDX = (int64 *) map2->anno;
           BMAP     = (int *) map2->data;

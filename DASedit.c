@@ -369,12 +369,14 @@ int main(int argc, char *argv[])
   { DAZZ_TRACK *track;
     int         i;
 
-    track = Load_Track(DB,"trim");
+    track = Open_Track(DB,"trim");
     if (track != NULL)
       { FILE *afile;
         char *aname;
         int   extra, tracklen, size;
         DAZZ_EXTRA  ex_hgap;
+
+        Load_All_Track_Data(track);
 
         TRIM_IDX = (int64 *) track->anno;
         TRIM     = (int *) track->data;
@@ -407,9 +409,10 @@ int main(int argc, char *argv[])
         exit (1);
       }
 
-    track = Load_Track(DB,"patch");
+    track = Open_Track(DB,"patch");
     if (track != NULL)
-      { PATCH_IDX = (int64 *) track->anno;
+      { Load_All_Track_Data(track);
+        PATCH_IDX = (int64 *) track->anno;
         PATCH     = (int *) track->data;
         for (i = 0; i <= nreads; i++)
           PATCH_IDX[i] /= sizeof(int);

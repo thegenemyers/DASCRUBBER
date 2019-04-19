@@ -2323,12 +2323,14 @@ int main(int argc, char *argv[])
 
   //  Get .qual track and extras
 
-  track = Load_Track(DB,"qual");
+  track = Open_Track(DB,"qual");
   if (track != NULL)
     { FILE       *afile;
       char       *aname;
       int         extra, tracklen, size;
       DAZZ_EXTRA  ex_qvs, ex_dif;
+
+      Load_All_Track_Data(track);
 
       QV_IDX = (int64 *) track->anno;
       QV     = (uint8 *) track->data;
@@ -2441,7 +2443,7 @@ int main(int argc, char *argv[])
     { Block_Looper *parse;
       FILE         *input;
 
-      parse = Parse_Block_Arg(argv[c]);
+      parse = Parse_Block_LAS_Arg(argv[c]);
 
       while ((input = Next_Block_Arg(parse)) != NULL)
         { DB_PART  = 0;
