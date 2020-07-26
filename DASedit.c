@@ -783,7 +783,7 @@ int main(int argc, char *argv[])
             newrec.coff   = i;
             newrec.flags  = (reads[i].flags & DB_QV) | DB_BEST;
             if (segfate[bi] > TRIMMED) 
-              newrec.flags |= DB_CSS;
+              newrec.flags |= DB_CCS;
             fwrite(&newrec,sizeof(DAZZ_READ),1,IDX_FILE);
             boff += COMPRESSED_LEN(tlen);
 
